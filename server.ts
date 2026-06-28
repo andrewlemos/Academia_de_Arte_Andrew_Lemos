@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import { execSync } from "child_process";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
@@ -12,6 +13,27 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const DB_PATH = path.join(process.cwd(), "data", "db.json");
 
 app.use(express.json());
+
+// API route to download the entire project as a tar.gz
+app.get("/api/download-project", (req, res) => {
+  try {
+    const archivePath = path.join("/tmp", `academiadearte-project-${Date.now()}.tar.gz`);
+    // Compress workspace excluding node_modules, dist, etc.
+    execSync(`tar --exclude='node_modules' --exclude='.git' --exclude='dist' -czf ${archivePath} .`);
+    res.download(archivePath, "academiadearte-project.tar.gz", (err) => {
+      try {
+        if (fs.existsSync(archivePath)) {
+          fs.unlinkSync(archivePath);
+        }
+      } catch (cleanErr) {
+        console.error("Erro ao limpar arquivo temporario:", cleanErr);
+      }
+    });
+  } catch (err: any) {
+    console.error("Erro ao criar pacote de download:", err);
+    res.status(500).send("Erro ao criar pacote de download: " + err.message);
+  }
+});
 
 // Lazy-initialized Gemini API client
 let aiClient: GoogleGenAI | null = null;
