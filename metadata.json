@@ -1,0 +1,8 @@
+{
+  "name": "Plataforma de Cursos e Apostilas de Arte",
+  "description": "Plataforma premium e exclusiva para criação de cursos online, apostilas digitais protegidas e infoprodutos com controle de acesso, suporte, simulador de vendas e inteligência artificial.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,165 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", serif;
+
+  --color-brand-wood: #8B5E3C;
+  --color-brand-clay: #A67B5B;
+  --color-brand-paper: #FDFCFB;
+  --color-brand-ink: #1A1A1A;
+}
+
+@layer utilities {
+  .section-padding {
+    padding-top: 5rem;
+    padding-bottom: 5rem;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+  @media (min-width: 768px) {
+    .section-padding {
+      padding-left: 3rem;
+      padding-right: 3rem;
+    }
+  }
+  @media (min-width: 1024px) {
+    .section-padding {
+      padding-left: 6rem;
+      padding-right: 6rem;
+    }
+  }
+
+  .glass {
+    background-color: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+  }
+}
+
+.markdown-body {
+  color: var(--color-brand-ink);
+  font-family: var(--font-sans);
+  line-height: 1.7;
+}
+.markdown-body h1 {
+  font-family: var(--font-serif);
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  color: var(--color-brand-wood);
+  border-bottom: 1px solid rgba(139, 94, 60, 0.15);
+  padding-bottom: 0.4rem;
+}
+.markdown-body h2 {
+  font-family: var(--font-serif);
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin-top: 1.4rem;
+  margin-bottom: 0.6rem;
+  color: var(--color-brand-ink);
+}
+.markdown-body h3 {
+  font-family: var(--font-serif);
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+.markdown-body p {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+.markdown-body ul {
+  list-style-type: disc;
+  margin-top: 0.5rem;
+  margin-bottom: 1rem;
+  padding-left: 1.5rem;
+}
+.markdown-body ol {
+  list-style-type: decimal;
+  margin-top: 0.5rem;
+  margin-bottom: 1rem;
+  padding-left: 1.5rem;
+}
+.markdown-body li {
+  margin-top: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+.markdown-body blockquote {
+  margin: 1.2rem 0;
+  padding-left: 1.2rem;
+  border-left: 4px solid var(--color-brand-wood);
+  color: #555555;
+  font-style: italic;
+  background-color: rgba(139, 94, 60, 0.03);
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-radius: 0 8px 8px 0;
+}
+.markdown-body code {
+  font-family: monospace;
+  background-color: rgba(139, 94, 60, 0.08);
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: #8B5E3C;
+}
+.markdown-body pre {
+  background-color: #1E1612;
+  color: #FDFCFB;
+  padding: 1.2rem;
+  border-radius: 12px;
+  overflow-x: auto;
+  margin: 1.2rem 0;
+  border: 1px solid rgba(139, 94, 60, 0.15);
+}
+.markdown-body pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+  font-size: 0.85rem;
+}
+.markdown-body a {
+  color: var(--color-brand-wood);
+  text-decoration: underline;
+  font-weight: 500;
+}
+.markdown-body hr {
+  border: 0;
+  border-top: 1px solid rgba(139, 94, 60, 0.15);
+  margin: 2rem 0;
+}
+
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  font-size: 0.85rem;
+  display: table;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.markdown-body th {
+  background-color: rgba(139, 94, 60, 0.08);
+  color: var(--color-brand-ink);
+  font-weight: 600;
+  text-align: left;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(139, 94, 60, 0.15);
+}
+.markdown-body td {
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(139, 94, 60, 0.15);
+  color: var(--color-brand-ink);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.markdown-body tr:nth-child(even) {
+  background-color: rgba(139, 94, 60, 0.02);
+}
+
+

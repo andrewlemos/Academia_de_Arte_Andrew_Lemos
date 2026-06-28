@@ -1,0 +1,646 @@
+import React, { useState, useEffect } from 'react';
+import { Course, Module, Lesson, Apostila, Sale, Coupon, User, StudentProgress, SupportTicket, SupportComment, Certificate } from './types';
+import VisitorCatalog from './components/VisitorCatalog';
+import Checkout from './components/Checkout';
+import StudentPortal from './components/StudentPortal';
+import AdminPanel from './components/AdminPanel';
+import { getDirectDriveUrl } from './utils/image';
+import { cleanCitations } from './utils/text';
+import { 
+  Sparkles, ShieldCheck, HelpCircle, BookOpen, UserCheck, 
+  Crown, LogOut, ChevronRight, Eye, Play, CheckCircle2, RefreshCw 
+} from 'lucide-react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+
+export default function App() {
+  // Database States
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [modules, setModules] = useState<Module[]>([]);
+  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [apostilas, setApostilas] = useState<Apostila[]>([]);
+  const [sales, setSales] = useState<Sale[]>([]);
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [progress, setProgress] = useState<StudentProgress[]>([]);
+  const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
+  const [comments, setComments] = useState<SupportComment[]>([]);
+  const [certificates, setCertificates] = useState<Certificate[]>([]);
+
+  // Auth / Role switcher simulator
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentRole, setCurrentRole] = useState<'visitor' | 'student' | 'admin'>('visitor');
+
+  // Checkout flows
+  const [checkoutProduct, setCheckoutProduct] = useState<Course | Apostila | null>(null);
+  const [checkoutType, setCheckoutType] = useState<'course' | 'apostila'>('course');
+
+  // Previewing Free lesson campaign
+  const [freePreviewLesson, setFreePreviewLesson] = useState<Lesson | null>(null);
+  const [freePreviewCourse, setFreePreviewCourse] = useState<Course | null>(null);
+
+  // Loading flag
+  const [loading, setLoading] = useState(true);
+
+  // 1. FETCH ALL DATA FROM BACKEND REST API
+  const fetchData = async () => {
+    try {
+      const [
+        resCourses, resModules, resLessons, resApostilas, 
+        resSales, resCoupons, resUsers, resProgress, 
+        resSupport, resComments, resCertificates
+      ] = await Promise.all([
+        fetch('/api/courses'),
+        fetch('/api/modules'),
+        fetch('/api/lessons'),
+        fetch('/api/apostilas'),
+        fetch('/api/sales'),
+        fetch('/api/coupons'),
+        fetch('/api/users'),
+        fetch('/api/progress'),
+        fetch('/api/support'),
+        fetch('/api/comments'),
+        fetch('/api/certificates')
+      ]);
+
+      const [
+        dataCourses, dataModules, dataLessons, dataApostilas,
+        dataSales, dataCoupons, dataUsers, dataProgress,
+        dataSupport, dataComments, dataCertificates
+      ] = await Promise.all([
+        resCourses.json(),
+        resModules.json(),
+        resLessons.json(),
+        resApostilas.json(),
+        resSales.json(),
+        resCoupons.json(),
+        resUsers.json(),
+        resProgress.json(),
+        resSupport.json(),
+        resComments.json(),
+        resCertificates.json()
+      ]);
+
+      setCourses(dataCourses);
+      setModules(dataModules);
+      setLessons(dataLessons);
+      setApostilas(dataApostilas);
+      setSales(dataSales);
+      setCoupons(dataCoupons);
+      setUsers(dataUsers);
+      setProgress(dataProgress);
+      setSupportTickets(dataSupport);
+      setComments(dataComments);
+      setCertificates(dataCertificates);
+
+      // Handle default logged-in users simulation
+      if (dataUsers && dataUsers.length > 0) {
+        // Default to public visitor, but preload admin forAndrew and student for Mariana
+        const adminObj = dataUsers.find((u: any) => u.role === 'admin') || null;
+        const studentObj = dataUsers.find((u: any) => u.role === 'student') || null;
+
+        if (currentRole === 'admin' && adminObj) setCurrentUser(adminObj);
+        else if (currentRole === 'student' && studentObj) setCurrentUser(studentObj);
+        else setCurrentUser(null);
+      }
+    } catch (err) {
+      console.error('Erro ao buscar dados do Express:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, [currentRole]);
+
+  // 2. BACKEND MUTATIONS HELPERS (CRUD OPERATIONS SINK)
+
+  // 2A. Courses Manager mutations
+  const handleAddCourse = async (coursePayload: Course) => {
+    try {
+      const res = await fetch('/api/courses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(coursePayload)
+      });
+      if (res.ok) await fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteCourse = async (id: string) => {
+    if (!window.confirm('Tem certeza de que deseja remover este curso e todos os seus módulos/aulas?')) return;
+    try {
+      const res = await fetch(`/api/courses/${id}`, { method: 'DELETE' });
+      if (res.ok) await fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // 2B. Modules Manager mutations
+  const handleAddModule = async (modPayload: Module) => {
+    try {
+      const res = await fetch('/api/modules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(modPayload)
+      });
+      if (res.ok) await fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteModule = async (id: string) => {
+    if (!window.confirm('Excluir este módulo removerá permanentemente todas as suas aulas associadas. Continuar?')) return;
+    try {
+      const res = await fetch(`/api/modules/${id}`, { method: 'DELETE' });
+      if (res.ok) await fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // 2C. Lessons Manager mutations
+  const handleAddLesson = async (lessonPayload: Lesson) => {
+    try {
+      const res = await fetch('/api/lessons', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(lessonPayload)
+      });
+      if (res.ok) await fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteLesson = async (id: string) => {
+    if (!window.confirm('Tem certeza de que deseja remover esta aula?')) return;
+    try {
+      const res = await fetch(`/api/lessons/${id}`, { method: 'DELETE' });
+      if (res.ok) await fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // 2D. Apostila (ebook) Manager mutations
+  const handleAddApostila = async (bookPayload: Apostila) => {
+    try {
+      const res = await fetch('/api/apostilas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bookPayload)
+      });
+      if (res.ok) await fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteApostila = async (id: string) => {
+    if (!window.confirm('Excluir esta apostila?')) return;
+    try {
+      const res = await fetch(`/api/apostilas/${id}`, { method: 'DELETE' });
+      if (res.ok) await fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // 2E. Approve manual pending sale
+  const handleApproveSale = async (id: string) => {
+    try {
+      const res = await fetch(`/api/sales/${id}/approve`, { method: 'POST' });
+      if (res.ok) {
+        await fetchData();
+        alert('Pagamento aprovado ficticiamente! O aluno já tem acesso total aos materiais.');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // 2F. Coupon creation
+  const handleAddCoupon = async (couponPayload: Coupon) => {
+    try {
+      const res = await fetch('/api/coupons', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(couponPayload)
+      });
+      if (res.ok) await fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteCoupon = async (id: string) => {
+    try {
+      const res = await fetch(`/api/coupons/${id}`, { method: 'DELETE' });
+      if (res.ok) await fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // 2G. Mark student progress completed/favorited
+  const handleToggleComplete = async (lessonId: string, courseId: string, completed: boolean) => {
+    if (!currentUser) return;
+    try {
+      const res = await fetch('/api/progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentId: currentUser.id,
+          lessonId,
+          courseId,
+          completed,
+          completedAt: completed ? new Date().toISOString() : null
+        })
+      });
+      if (res.ok) await fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleToggleFavorite = async (lessonId: string, courseId: string, favorited: boolean) => {
+    if (!currentUser) return;
+    try {
+      const res = await fetch('/api/progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentId: currentUser.id,
+          lessonId,
+          courseId,
+          favorited
+        })
+      });
+      if (res.ok) await fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // 2H. Submit Help desk support ticket
+  const handleSubmitTicket = async (ticketPayload: any) => {
+    try {
+      const res = await fetch('/api/support', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ticketPayload)
+      });
+      if (res.ok) await fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAnswerTicket = async (id: string, answerText: string) => {
+    try {
+      const res = await fetch(`/api/support/${id}/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answerText })
+      });
+      if (res.ok) await fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // 2I. Submit lesson comment discussions
+  const handleAddComment = async (commentPayload: any) => {
+    try {
+      const res = await fetch('/api/comments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(commentPayload)
+      });
+      if (res.ok) await fetchData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // 2J. Issue course Certificate
+  const handleIssueCertificate = async (certPayload: any) => {
+    try {
+      const res = await fetch('/api/certificates/issue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(certPayload)
+      });
+      if (res.ok) {
+        await fetchData();
+        alert('Certificado oficial premium de conclusão emitido e autenticado com sucesso!');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // 3. MAIN RENDER SWITCHER
+
+  return (
+    <div className="min-h-screen bg-brand-paper flex flex-col font-sans text-brand-ink antialiased selection:bg-brand-wood selection:text-white" id="main-app-shell">
+      
+      {/* 1. TOP DEVELOPMENT BAR - SIMULATOR CONTROLS */}
+      <div className="bg-gradient-to-r from-brand-ink via-[#251F1B] to-brand-ink border-b border-brand-wood/20 text-white text-xs px-4 py-2.5 flex flex-col sm:flex-row justify-between items-center gap-3 relative z-50">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-brand-clay fill-brand-clay/20" />
+          <span className="font-serif font-semibold tracking-tight text-sm text-[#F6EFEA]">Academia de Artes Andrew Lemos</span>
+          <span className="text-brand-clay/50">|</span>
+          <span className="text-[#DFD3C3] font-medium font-mono text-[10px]">Simulador de Perfis (Visitante, Aluno, Produtor)</span>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-brand-clay font-bold uppercase text-[9px] tracking-wider">Simular Acesso Como:</span>
+          
+          <div className="flex bg-[#1E1916] p-0.5 rounded-full border border-brand-wood/30">
+            <button
+              onClick={() => {
+                setCurrentRole('visitor');
+                setCheckoutProduct(null);
+                setFreePreviewLesson(null);
+              }}
+              className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${
+                currentRole === 'visitor' 
+                  ? 'bg-brand-wood text-[#FDFCFB] shadow-sm' 
+                  : 'text-neutral-400 hover:text-[#FDFCFB]'
+              }`}
+            >
+              Visitante
+            </button>
+            <button
+              onClick={() => {
+                setCurrentRole('student');
+                setCheckoutProduct(null);
+                setFreePreviewLesson(null);
+              }}
+              className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${
+                currentRole === 'student' 
+                  ? 'bg-brand-wood text-[#FDFCFB] shadow-sm' 
+                  : 'text-neutral-400 hover:text-[#FDFCFB]'
+              }`}
+            >
+              Aluna (Mariana)
+            </button>
+            <button
+              onClick={() => {
+                setCurrentRole('admin');
+                setCheckoutProduct(null);
+                setFreePreviewLesson(null);
+              }}
+              className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${
+                currentRole === 'admin' 
+                  ? 'bg-brand-wood text-[#FDFCFB] shadow-sm' 
+                  : 'text-neutral-400 hover:text-[#FDFCFB]'
+              }`}
+            >
+              Produtor (Andrew)
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. MAIN HEADER BAR */}
+      <header className="glass border-b border-brand-wood/10 sticky top-0 z-40 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex justify-between items-center">
+          <div 
+            onClick={() => {
+              setCheckoutProduct(null);
+              setFreePreviewLesson(null);
+            }}
+            className="flex items-center gap-3 cursor-pointer group"
+          >
+            <div className="w-10 h-10 bg-brand-wood text-white rounded-full flex items-center justify-center font-serif font-semibold text-lg shadow-md border border-brand-clay/30 group-hover:bg-brand-clay transition-all duration-300">
+              AL
+            </div>
+            <div>
+              <span className="font-serif font-semibold text-base text-brand-ink tracking-tight block">Academia de Artes Andrew Lemos</span>
+              <span className="text-[9px] text-brand-clay font-sans font-semibold uppercase tracking-widest block">Cursos de Artes Plásticas & Infoprodutos</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4">
+            {currentUser ? (
+              <div className="flex items-center gap-3">
+                <img 
+                  src={getDirectDriveUrl(currentUser.avatarUrl) || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200&auto=format&fit=crop"} 
+                  alt={currentUser.name} 
+                  referrerPolicy="no-referrer"
+                  className="w-9 h-9 rounded-full object-cover border border-brand-wood/20 shadow-sm"
+                />
+                <div className="hidden sm:block text-right">
+                  <span className="font-serif font-bold text-xs text-brand-ink block leading-tight">{currentUser.name}</span>
+                  <span className={`text-[9px] font-sans font-bold uppercase ${
+                    currentUser.role === 'admin' ? 'text-brand-wood' : 'text-brand-clay'
+                  }`}>
+                    {currentUser.role === 'admin' ? 'Professor / Produtor' : 'Membro da Academia'}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <span className="text-[10px] text-brand-clay font-sans font-bold uppercase tracking-wider bg-white/60 px-3 py-1.5 rounded-full border border-brand-clay/10">
+                Acesso Visitante
+              </span>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* 3. MAIN WORKSPACE / CONTENT VIEWER */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center h-96 space-y-4">
+            <RefreshCw className="w-8 h-8 text-brand-wood animate-spin" />
+            <p className="text-xs text-brand-clay font-bold uppercase tracking-widest">Sintonizando ateliê orgânico...</p>
+          </div>
+        ) : (
+          <>
+            {/* PUBLIC VISITORS VIEW / PUBLIC CATALOG */}
+            {currentRole === 'visitor' && (
+              <>
+                {checkoutProduct ? (
+                  <Checkout 
+                    product={checkoutProduct}
+                    productType={checkoutType}
+                    currentUser={users.find(u => u.role === 'student') || users[0]}
+                    coupons={coupons}
+                    onCancel={() => setCheckoutProduct(null)}
+                    onPaymentSuccess={() => {
+                      setCheckoutProduct(null);
+                      setCurrentRole('student');
+                    }}
+                  />
+                ) : freePreviewLesson && freePreviewCourse ? (
+                  /* RENDER LESSON CAMPAIGN FREE PREVIEW VIEW FOR Public Visitors */
+                  <div className="space-y-6" id="visitor-free-preview">
+                    <div className="flex justify-between items-center border-b border-brand-wood/10 pb-4 flex-wrap gap-3">
+                      <div>
+                        <span className="inline-flex items-center gap-1 bg-brand-clay/10 text-brand-wood border border-brand-clay/20 px-3 py-1 rounded-full text-[10px] font-sans font-bold uppercase tracking-widest animate-pulse">
+                          Demonstração Gratuita
+                        </span>
+                        <h1 className="text-2xl md:text-3xl font-serif font-bold text-brand-ink mt-2">{freePreviewLesson.title}</h1>
+                        <p className="text-xs text-brand-clay mt-1">Este módulo faz parte do curso: <strong className="font-serif">{freePreviewCourse.title}</strong></p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setCheckoutProduct(freePreviewCourse);
+                          setCheckoutType('course');
+                        }}
+                        className="bg-brand-wood text-white px-6 py-3 rounded-full font-sans font-medium text-xs hover:bg-brand-clay transition-all flex items-center justify-center gap-2 group shadow-lg shadow-brand-wood/20 whitespace-nowrap"
+                      >
+                        Matricular no Curso Completo <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                      <div className="lg:col-span-8 space-y-6">
+                        <div className="bg-brand-ink rounded-3xl overflow-hidden aspect-video border border-brand-wood/10 shadow-lg relative">
+                          <video 
+                            src={freePreviewLesson.videoUrl} 
+                            controls 
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+
+                        <div className="bg-white p-6 rounded-3xl border border-brand-wood/5 shadow-sm space-y-4">
+                          <h3 className="font-serif font-bold text-brand-ink text-base">Resumo Teórico da Aula</h3>
+                          <div className="markdown-body">
+                            <Markdown 
+                              remarkPlugins={[remarkGfm]}
+                              components={{
+                                img: ({ src, ...props }) => (
+                                  <img 
+                                    src={getDirectDriveUrl(src)} 
+                                    {...props} 
+                                    referrerPolicy="no-referrer" 
+                                    className="max-w-full my-4 rounded-2xl border border-brand-wood/10 shadow-sm mx-auto" 
+                                  />
+                                )
+                              }}
+                            >
+                              {cleanCitations(freePreviewLesson.textContent)}
+                            </Markdown>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="lg:col-span-4 bg-white p-6 rounded-3xl border border-brand-wood/5 shadow-sm space-y-4 h-fit">
+                        <h4 className="font-serif font-semibold text-brand-ink text-sm">Aulas Demonstrativas</h4>
+                        <div className="space-y-2">
+                          {lessons.filter(l => freePreviewCourse.freeModules.includes(l.moduleId)).map((les, idx) => (
+                            <div 
+                              key={les.id}
+                              onClick={() => setFreePreviewLesson(les)}
+                              className={`p-3 rounded-2xl border cursor-pointer text-xs transition-all flex items-center justify-between ${
+                                les.id === freePreviewLesson.id 
+                                  ? 'border-brand-wood bg-brand-paper text-brand-wood font-semibold' 
+                                  : 'border-brand-wood/5 text-brand-clay hover:bg-brand-paper'
+                              }`}
+                            >
+                              <span>{idx + 1}. {les.title}</span>
+                              <span className="text-[10px] text-brand-clay/60">{les.duration || '15m'}</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        <button 
+                          onClick={() => { setFreePreviewLesson(null); setFreePreviewCourse(null); }}
+                          className="w-full py-3 bg-brand-paper hover:bg-brand-wood/5 text-brand-wood border border-brand-wood/20 rounded-full text-xs font-semibold uppercase tracking-wider transition-all"
+                        >
+                          Voltar ao Catálogo
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <VisitorCatalog 
+                    courses={courses}
+                    modules={modules}
+                    lessons={lessons}
+                    apostilas={apostilas}
+                    onSelectCourse={(course) => {
+                      setCheckoutProduct(course);
+                      setCheckoutType('course');
+                    }}
+                    onSelectApostila={(book) => {
+                      setCheckoutProduct(book);
+                      setCheckoutType('apostila');
+                    }}
+                    onStartFreeLesson={(lesson, course) => {
+                      setFreePreviewLesson(lesson);
+                      setFreePreviewCourse(course);
+                    }}
+                  />
+                )}
+              </>
+            )}
+
+            {/* SECURE REGISTERED STUDENT PORTAL VIEW */}
+            {currentRole === 'student' && currentUser && (
+              <StudentPortal 
+                currentUser={currentUser}
+                courses={courses}
+                modules={modules}
+                lessons={lessons}
+                apostilas={apostilas}
+                progress={progress}
+                onToggleComplete={handleToggleComplete}
+                onToggleFavorite={handleToggleFavorite}
+                comments={comments}
+                onAddComment={handleAddComment}
+                certificates={certificates}
+                onIssueCertificate={handleIssueCertificate}
+                sales={sales}
+                supportTickets={supportTickets}
+                onSubmitTicket={handleSubmitTicket}
+              />
+            )}
+
+            {/* CREATOR/ADMIN PARENT WORKSPACE */}
+            {currentRole === 'admin' && currentUser && (
+              <AdminPanel 
+                courses={courses}
+                modules={modules}
+                lessons={lessons}
+                apostilas={apostilas}
+                sales={sales}
+                coupons={coupons}
+                users={users}
+                supportTickets={supportTickets}
+                onAddCourse={handleAddCourse}
+                onDeleteCourse={handleDeleteCourse}
+                onAddModule={handleAddModule}
+                onDeleteModule={handleDeleteModule}
+                onAddLesson={handleAddLesson}
+                onDeleteLesson={handleDeleteLesson}
+                onAddApostila={handleAddApostila}
+                onDeleteApostila={handleDeleteApostila}
+                onApproveSale={handleApproveSale}
+                onAddCoupon={handleAddCoupon}
+                onDeleteCoupon={handleDeleteCoupon}
+                onAnswerTicket={handleAnswerTicket}
+              />
+            )}
+          </>
+        )}
+      </main>
+
+      {/* 4. FOOTER */}
+      <footer className="bg-white border-t border-brand-wood/10 py-8 mt-12 text-center text-xs text-brand-clay font-sans">
+        <p className="font-serif text-sm font-semibold text-brand-ink">Academia de Artes Andrew Lemos</p>
+        <p className="mt-1">© 2026. Cursos e apostilas de artes plásticas de visualização protegida. Todos os direitos reservados.</p>
+        <p className="mt-2 text-[10px] text-brand-clay/60 uppercase tracking-widest font-mono">Infoprodutos de visualização protegida</p>
+      </footer>
+    </div>
+  );
+}
