@@ -1,13 +1,13 @@
 # Stage 1: Build the React frontend and compile the TypeScript Express backend
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
 # Copy package definition files
 COPY package*.json ./
 
-# Install ALL dependencies (including devDependencies like typescript, esbuild, vite)
-RUN npm ci
+# Install ALL dependencies (using npm install for better resilience against lockfile mismatch)
+RUN npm install
 
 # Copy all source files
 COPY . .
@@ -16,7 +16,7 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Create a lightweight, production-ready image
-FROM node:20-alpine
+FROM node:20-slim
 
 WORKDIR /app
 
@@ -25,7 +25,7 @@ ENV NODE_ENV=production
 
 # Copy package definition files and install ONLY production dependencies
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm install --omit=dev
 
 # Copy compiled frontend and backend assets from Stage 1
 COPY --from=builder /app/dist ./dist
