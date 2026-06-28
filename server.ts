@@ -8,7 +8,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const DB_PATH = path.join(process.cwd(), "data", "db.json");
 
 app.use(express.json());
@@ -742,7 +742,9 @@ REGRAS CRÍTICAS DE ESTILO:
 // ==========================================
 
 async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
+  const isDev = process.env.NODE_ENV === "development" || (process.env.NODE_ENV !== "production" && !fs.existsSync(path.join(process.cwd(), "dist", "index.html")));
+
+  if (isDev) {
     // Development mode with Vite Dev Server Middleware
     const vite = await createViteServer({
       server: { middlewareMode: true },
