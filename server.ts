@@ -7,6 +7,7 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import AdmZip from "adm-zip";
 import * as admin from "firebase-admin";
+import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 import { initializeApp as initFirebaseClient, getApps, getApp } from "firebase/app";
 import { getFirestore as getFirestoreClient, doc as docClient, getDoc as getDocClient, setDoc as setDocClient } from "firebase/firestore";
 
@@ -30,8 +31,11 @@ try {
 // Initialize Firebase Client SDK on Server for Firestore operations (bypasses service account IAM permissions issues)
 let clientDb: any = null;
 
-function getFirestoreDb(): any {
-  if (clientDb) return clientDb;
+function getFirestoreDbInstance(): { type: 'client' | 'admin' | 'local'; db: any } {
+  if (clientDb) {
+    return { type: 'client', db: clientDb };
+  }
+  // Try Client SDK first
   try {
     const configPath = path.join(process.cwd(), "firebase-applet-config.json");
     if (fs.existsSync(configPath)) {
@@ -43,19 +47,37 @@ function getFirestoreDb(): any {
         clientApp = getApp();
       }
       clientDb = getFirestoreClient(clientApp, firebaseConfig.firestoreDatabaseId);
-      console.log("[FIREBASE] Client-side SDK para Firestore inicializado com sucesso no servidor (Lazy).");
-      return clientDb;
+      console.log("[FIREBASE] Client-side SDK para Firestore inicializado com sucesso.");
+      return { type: 'client', db: clientDb };
     } else {
-      console.warn("[FIREBASE] Arquivo firebase-applet-config.json não encontrado para o servidor.");
+      console.warn("[FIREBASE] Arquivo firebase-applet-config.json não encontrado.");
     }
-  } catch (error) {
-    console.error("[FIREBASE] Erro ao inicializar Client-side SDK (Lazy):", error);
+  } catch (error: any) {
+    console.warn("[FIREBASE] Erro ao inicializar Client SDK no servidor:", error.message || error);
   }
-  throw new Error("[FIREBASE] Firestore client database is not initialized. Config file might be missing or invalid.");
+
+  // Try Admin SDK fallback
+  try {
+    const adminDb = getAdminFirestore("ai-studio-plataformadecurs-57ed65e2-5e5e-40bb-b5e1-9c6fa8c753b8");
+    if (adminDb) {
+      console.log("[FIREBASE] Usando Admin SDK para Firestore.");
+      return { type: 'admin', db: adminDb };
+    }
+  } catch (error: any) {
+    console.warn("[FIREBASE] Erro ao inicializar Admin SDK no servidor:", error.message || error);
+  }
+
+  return { type: 'local', db: null };
+}
+
+function getFirestoreDb(): any {
+  const instance = getFirestoreDbInstance();
+  if (instance.db) return instance.db;
+  throw new Error("[FIREBASE] Nenhum SDK do Firestore está disponível.");
 }
 
 const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const PORT = 3000;
 const DB_PATH = path.join(process.cwd(), "data", "db.json");
 
 app.use(express.json());
@@ -144,6 +166,43 @@ function getGeminiClient(): GoogleGenAI | null {
   return aiClient;
 }
 
+function readLocalDB(): any {
+  const defaultState = {
+    courses: [],
+    modules: [],
+    lessons: [],
+    apostilas: [],
+    users: [],
+    sales: [],
+    coupons: [],
+    progress: [],
+    supportTickets: [],
+    certificates: [],
+    supportComments: []
+  };
+  if (fs.existsSync(DB_PATH)) {
+    try {
+      const raw = fs.readFileSync(DB_PATH, "utf-8");
+      return { ...defaultState, ...JSON.parse(raw) };
+    } catch (e) {
+      console.error("[LOCAL DB] Erro ao ler db.json local:", e);
+    }
+  }
+  return defaultState;
+}
+
+function writeLocalDB(data: any): void {
+  try {
+    const dir = path.dirname(DB_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+  } catch (error) {
+    console.error("[LOCAL DB] Erro ao salvar db.json local:", error);
+  }
+}
+
 // Read database helper
 async function readDB(): Promise<any> {
   const defaultState = {
@@ -160,62 +219,143 @@ async function readDB(): Promise<any> {
     supportComments: []
   };
 
-  const dbInstance = getFirestoreDb();
-  const docRef = docClient(dbInstance, "system", "lms_database");
-  const snapshot = await getDocClient(docRef);
-  
-  let dbData: any = null;
-  if (snapshot.exists()) {
-    dbData = snapshot.data();
-  }
+  const source = getFirestoreDbInstance();
 
-  // If the Firestore document does not exist, or does not contain a valid 'courses' array, we need to seed it
-  if (!dbData || !Array.isArray(dbData.courses)) {
-    console.log("[FIREBASE] Nenhum dado válido ou 'courses' ausente no Firestore. Carregando e semeando a partir do db.json...");
-    let seedData = { ...defaultState };
-    if (fs.existsSync(DB_PATH)) {
-      try {
-        const raw = fs.readFileSync(DB_PATH, "utf-8");
-        seedData = { ...defaultState, ...JSON.parse(raw) };
-      } catch (e) {
-        console.error("[FIREBASE] Erro ao ler db.json para seed:", e);
+  if (source.type === "client") {
+    try {
+      const docRef = docClient(source.db, "system", "lms_database");
+      const snapshot = await getDocClient(docRef);
+      if (snapshot.exists()) {
+        const dbData = snapshot.data();
+        if (dbData && Array.isArray(dbData.courses)) {
+          return { ...defaultState, ...dbData };
+        }
       }
+      // If document does not exist, seed it
+      console.log("[FIREBASE] Semeando Firestore (Client SDK)...");
+      const local = readLocalDB();
+      await setDocClient(docRef, local);
+      return local;
+    } catch (err: any) {
+      console.error("[FIREBASE] Erro ao ler Firestore via Client SDK:", err.message || err);
     }
-    
-    // Save this complete seed back to Firestore
-    await setDocClient(docRef, seedData);
-    console.log("[FIREBASE] Seed inicial completo enviado para o Firestore.");
-    return seedData;
+  } else if (source.type === "admin") {
+    try {
+      const docRef = source.db.collection("system").doc("lms_database");
+      const snapshot = await docRef.get();
+      if (snapshot.exists) {
+        const dbData = snapshot.data();
+        if (dbData && Array.isArray(dbData.courses)) {
+          return { ...defaultState, ...dbData };
+        }
+      }
+      // If document does not exist, seed it
+      console.log("[FIREBASE] Semeando Firestore (Admin SDK)...");
+      const local = readLocalDB();
+      await docRef.set(local);
+      return local;
+    } catch (err: any) {
+      console.error("[FIREBASE] Erro ao ler Firestore via Admin SDK:", err.message || err);
+    }
   }
 
-  // Ensure all required arrays exist in the returned data to avoid undefined errors
-  return { ...defaultState, ...dbData };
+  // Fallback to local DB if Firestore fails or is disabled
+  console.warn("[FIREBASE] Usando banco de dados local db.json (Contingência).");
+  return readLocalDB();
 }
 
 // Write database helper
 async function writeDB(data: any): Promise<void> {
-  const dbInstance = getFirestoreDb();
-  const docRef = docClient(dbInstance, "system", "lms_database");
-  
-  // Save directly to Firestore. If this fails, the error propagates so the request fails cleanly
-  await setDocClient(docRef, data);
-  console.log("[FIREBASE] Dados salvos com sucesso no Firestore.");
+  const source = getFirestoreDbInstance();
+  let success = false;
 
-  // Also passively write to local backup db.json so offline mode/ZIP download matches
-  try {
-    const dir = path.dirname(DB_PATH);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+  if (source.type === "client") {
+    try {
+      const docRef = docClient(source.db, "system", "lms_database");
+      await setDocClient(docRef, data);
+      console.log("[FIREBASE] Salvo com sucesso no Firestore via Client SDK.");
+      success = true;
+    } catch (err: any) {
+      console.error("[FIREBASE] Erro ao gravar no Firestore via Client SDK:", err.message || err);
     }
-    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), "utf-8");
-  } catch (error) {
-    console.error("Erro ao salvar backup local do db.json:", error);
+  } else if (source.type === "admin") {
+    try {
+      const docRef = source.db.collection("system").doc("lms_database");
+      await docRef.set(data);
+      console.log("[FIREBASE] Salvo com sucesso no Firestore via Admin SDK.");
+      success = true;
+    } catch (err: any) {
+      console.error("[FIREBASE] Erro ao gravar no Firestore via Admin SDK:", err.message || err);
+    }
   }
+
+  // Always write to local backup db.json to guarantee no data loss and maintain backup
+  writeLocalDB(data);
 }
 
 // ==========================================
 // REST API ENDPOINTS
 // ==========================================
+
+// 0. DEBUG FIREBASE (For diagnosing database connection issues in production)
+app.get("/api/debug-firebase", async (req, res) => {
+  const diag: any = {
+    currentTime: new Date().toISOString(),
+    cwd: process.cwd(),
+    dirname: __dirname,
+    configExists: false,
+    configError: null,
+    clientInitError: null,
+    clientReadError: null,
+    adminInitError: null,
+    adminReadError: null,
+    clientDbInitialized: false
+  };
+
+  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+  diag.configPath = configPath;
+  if (fs.existsSync(configPath)) {
+    diag.configExists = true;
+    try {
+      const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      diag.projectId = firebaseConfig.projectId;
+      diag.firestoreDatabaseId = firebaseConfig.firestoreDatabaseId;
+    } catch (e: any) {
+      diag.configError = e.message || e;
+    }
+  }
+
+  // Test Client DB initialization
+  try {
+    const dbInstance = getFirestoreDb();
+    diag.clientDbInitialized = true;
+    
+    // Try reading
+    const docRef = docClient(dbInstance, "system", "lms_database");
+    const snapshot = await getDocClient(docRef);
+    diag.clientReadSuccess = snapshot.exists();
+    if (snapshot.exists()) {
+      diag.clientKeys = Object.keys(snapshot.data() || {});
+    }
+  } catch (e: any) {
+    diag.clientReadError = e.message || e;
+  }
+
+  // Test Admin DB
+  try {
+    const adminDb = getAdminFirestore();
+    const adminDocRef = adminDb.collection("system").doc("lms_database");
+    const adminSnapshot = await adminDocRef.get();
+    diag.adminReadSuccess = adminSnapshot.exists;
+    if (adminSnapshot.exists) {
+      diag.adminKeys = Object.keys(adminSnapshot.data() || {});
+    }
+  } catch (e: any) {
+    diag.adminReadError = e.message || e;
+  }
+
+  res.json(diag);
+});
 
 // 1. GET FULL DATABASE STATE (For Admin backups or inspection)
 app.get("/api/db", async (req, res) => {
