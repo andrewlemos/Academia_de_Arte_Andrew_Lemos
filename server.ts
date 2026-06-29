@@ -7,7 +7,8 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import AdmZip from "adm-zip";
 import * as admin from "firebase-admin";
-import { getFirestore } from "firebase-admin/firestore";
+import { initializeApp as initFirebaseClient } from "firebase/app";
+import { getFirestore as getFirestoreClient, doc as docClient, getDoc as getDocClient, setDoc as setDocClient } from "firebase/firestore";
 
 dotenv.config();
 
@@ -24,6 +25,22 @@ try {
   } catch (err) {
     console.error("[FIREBASE] Falha total ao inicializar Admin SDK:", err);
   }
+}
+
+// Initialize Firebase Client SDK on Server for Firestore operations (bypasses service account IAM permissions issues)
+let clientDb: any = null;
+try {
+  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+  if (fs.existsSync(configPath)) {
+    const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    const clientApp = initFirebaseClient(firebaseConfig);
+    clientDb = getFirestoreClient(clientApp, firebaseConfig.firestoreDatabaseId);
+    console.log("[FIREBASE] Client-side SDK para Firestore inicializado com sucesso no servidor.");
+  } else {
+    console.warn("[FIREBASE] Arquivo firebase-applet-config.json não encontrado para o servidor.");
+  }
+} catch (error) {
+  console.error("[FIREBASE] Erro ao inicializar Client-side SDK no servidor:", error);
 }
 
 const app = express();
@@ -145,17 +162,16 @@ function readLocalDB(): any {
 }
 
 async function readDB(): Promise<any> {
-  if (useLocalOnly) {
+  if (useLocalOnly || !clientDb) {
     return readLocalDB();
   }
 
   try {
-    const db = getFirestore("ai-studio-plataformadecurs-57ed65e2-5e5e-40bb-b5e1-9c6fa8c753b8");
-    const docRef = db.collection("system").doc("lms_database");
-    const doc = await docRef.get();
+    const docRef = docClient(clientDb, "system", "lms_database");
+    const snapshot = await getDocClient(docRef);
     
-    if (doc.exists) {
-      const data = doc.data();
+    if (snapshot.exists()) {
+      const data = snapshot.data();
       if (data) {
         return data;
       }
@@ -182,7 +198,7 @@ async function readDB(): Promise<any> {
           console.error("[FIREBASE] Erro ao ler db.json para seed:", e);
         }
       }
-      await docRef.set(seedData);
+      await setDocClient(docRef, seedData);
       console.log("[FIREBASE] Seed inicial enviado para o Firestore.");
       return seedData;
     }
@@ -197,11 +213,10 @@ async function readDB(): Promise<any> {
 // Write database helper
 async function writeDB(data: any): Promise<void> {
   let firebaseSaved = false;
-  if (!useLocalOnly) {
+  if (!useLocalOnly && clientDb) {
     try {
-      const db = getFirestore("ai-studio-plataformadecurs-57ed65e2-5e5e-40bb-b5e1-9c6fa8c753b8");
-      const docRef = db.collection("system").doc("lms_database");
-      await docRef.set(data);
+      const docRef = docClient(clientDb, "system", "lms_database");
+      await setDocClient(docRef, data);
       console.log("[FIREBASE] Dados salvos com sucesso no Firestore.");
       firebaseSaved = true;
     } catch (error: any) {
