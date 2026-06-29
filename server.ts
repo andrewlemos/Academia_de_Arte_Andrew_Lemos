@@ -7,9 +7,7 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import AdmZip from "adm-zip";
 import * as admin from "firebase-admin";
-import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
-import { initializeApp as initFirebaseClient, getApps, getApp } from "firebase/app";
-import { getFirestore as getFirestoreClient, doc as docClient, getDoc as getDocClient, setDoc as setDocClient } from "firebase/firestore";
+import { getFirestore } from "firebase-admin/firestore";
 
 dotenv.config();
 
@@ -28,56 +26,8 @@ try {
   }
 }
 
-// Initialize Firebase Client SDK on Server for Firestore operations (bypasses service account IAM permissions issues)
-let clientDb: any = null;
-
-function getFirestoreDbInstance(): { type: 'client' | 'admin' | 'local'; db: any } {
-  if (clientDb) {
-    return { type: 'client', db: clientDb };
-  }
-  // Try Client SDK first
-  try {
-    const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-    if (fs.existsSync(configPath)) {
-      const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-      let clientApp;
-      if (getApps().length === 0) {
-        clientApp = initFirebaseClient(firebaseConfig);
-      } else {
-        clientApp = getApp();
-      }
-      clientDb = getFirestoreClient(clientApp, firebaseConfig.firestoreDatabaseId);
-      console.log("[FIREBASE] Client-side SDK para Firestore inicializado com sucesso.");
-      return { type: 'client', db: clientDb };
-    } else {
-      console.warn("[FIREBASE] Arquivo firebase-applet-config.json não encontrado.");
-    }
-  } catch (error: any) {
-    console.warn("[FIREBASE] Erro ao inicializar Client SDK no servidor:", error.message || error);
-  }
-
-  // Try Admin SDK fallback
-  try {
-    const adminDb = getAdminFirestore("ai-studio-plataformadecurs-57ed65e2-5e5e-40bb-b5e1-9c6fa8c753b8");
-    if (adminDb) {
-      console.log("[FIREBASE] Usando Admin SDK para Firestore.");
-      return { type: 'admin', db: adminDb };
-    }
-  } catch (error: any) {
-    console.warn("[FIREBASE] Erro ao inicializar Admin SDK no servidor:", error.message || error);
-  }
-
-  return { type: 'local', db: null };
-}
-
-function getFirestoreDb(): any {
-  const instance = getFirestoreDbInstance();
-  if (instance.db) return instance.db;
-  throw new Error("[FIREBASE] Nenhum SDK do Firestore está disponível.");
-}
-
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const DB_PATH = path.join(process.cwd(), "data", "db.json");
 
 app.use(express.json());
@@ -166,211 +116,111 @@ function getGeminiClient(): GoogleGenAI | null {
   return aiClient;
 }
 
-function readLocalDB(): any {
-  const defaultState = {
-    courses: [],
-    modules: [],
-    lessons: [],
-    apostilas: [],
-    users: [],
-    sales: [],
-    coupons: [],
-    progress: [],
-    supportTickets: [],
-    certificates: [],
-    supportComments: []
-  };
-  if (fs.existsSync(DB_PATH)) {
-    try {
-      const raw = fs.readFileSync(DB_PATH, "utf-8");
-      return { ...defaultState, ...JSON.parse(raw) };
-    } catch (e) {
-      console.error("[LOCAL DB] Erro ao ler db.json local:", e);
+// Sincronizar dados do Firestore para o arquivo local db.json
+async function syncFromFirestore() {
+  try {
+    console.log("[FIREBASE] Sincronizando dados do Firestore...");
+    const db = getFirestore("ai-studio-plataformadecurs-57ed65e2-5e5e-40bb-b5e1-9c6fa8c753b8");
+    const docRef = db.collection("system").doc("lms_database");
+    const doc = await docRef.get();
+    
+    if (doc.exists) {
+      const data = doc.data();
+      if (data) {
+        console.log("[FIREBASE] Dados recuperados com sucesso do Firestore.");
+        const dir = path.dirname(DB_PATH);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+      }
+    } else {
+      console.log("[FIREBASE] Nenhum dado encontrado no Firestore. Fazendo upload inicial...");
+      if (fs.existsSync(DB_PATH)) {
+        const raw = fs.readFileSync(DB_PATH, "utf-8");
+        const data = JSON.parse(raw);
+        await docRef.set(data);
+        console.log("[FIREBASE] Dados iniciais do db.json enviados para o Firestore.");
+      }
     }
+  } catch (error) {
+    console.error("[FIREBASE] Erro ao sincronizar do Firestore. Usando o arquivo local como fallback.", error);
   }
-  return defaultState;
 }
 
-function writeLocalDB(data: any): void {
+// Salvar dados assincronamente no Firestore
+async function saveToFirestore(data: any) {
+  try {
+    const db = getFirestore("ai-studio-plataformadecurs-57ed65e2-5e5e-40bb-b5e1-9c6fa8c753b8");
+    const docRef = db.collection("system").doc("lms_database");
+    await docRef.set(data);
+    console.log("[FIREBASE] Dados salvos no Firestore com sucesso.");
+  } catch (error) {
+    console.error("[FIREBASE] Erro ao salvar dados no Firestore:", error);
+  }
+}
+
+// Read database helper
+function readDB(): any {
+  try {
+    if (!fs.existsSync(DB_PATH)) {
+      return {
+        courses: [],
+        modules: [],
+        lessons: [],
+        apostilas: [],
+        users: [],
+        sales: [],
+        coupons: [],
+        progress: [],
+        supportTickets: [],
+        certificates: [],
+        supportComments: []
+      };
+    }
+    const raw = fs.readFileSync(DB_PATH, "utf-8");
+    return JSON.parse(raw);
+  } catch (error) {
+    console.error("Erro ao ler banco de dados:", error);
+    return {};
+  }
+}
+
+// Write database helper
+function writeDB(data: any): void {
   try {
     const dir = path.dirname(DB_PATH);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
     fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+    // Sincronizar com o Firestore em background (sem travar a rota Express)
+    saveToFirestore(data).catch((err) => {
+      console.error("[FIREBASE] Erro em background ao salvar no Firestore:", err);
+    });
   } catch (error) {
-    console.error("[LOCAL DB] Erro ao salvar db.json local:", error);
+    console.error("Erro ao salvar no banco de dados local:", error);
   }
-}
-
-// Read database helper
-async function readDB(): Promise<any> {
-  const defaultState = {
-    courses: [],
-    modules: [],
-    lessons: [],
-    apostilas: [],
-    users: [],
-    sales: [],
-    coupons: [],
-    progress: [],
-    supportTickets: [],
-    certificates: [],
-    supportComments: []
-  };
-
-  const source = getFirestoreDbInstance();
-
-  if (source.type === "client") {
-    try {
-      const docRef = docClient(source.db, "system", "lms_database");
-      const snapshot = await getDocClient(docRef);
-      if (snapshot.exists()) {
-        const dbData = snapshot.data();
-        if (dbData && Array.isArray(dbData.courses)) {
-          return { ...defaultState, ...dbData };
-        }
-      }
-      // If document does not exist, seed it
-      console.log("[FIREBASE] Semeando Firestore (Client SDK)...");
-      const local = readLocalDB();
-      await setDocClient(docRef, local);
-      return local;
-    } catch (err: any) {
-      console.error("[FIREBASE] Erro ao ler Firestore via Client SDK:", err.message || err);
-    }
-  } else if (source.type === "admin") {
-    try {
-      const docRef = source.db.collection("system").doc("lms_database");
-      const snapshot = await docRef.get();
-      if (snapshot.exists) {
-        const dbData = snapshot.data();
-        if (dbData && Array.isArray(dbData.courses)) {
-          return { ...defaultState, ...dbData };
-        }
-      }
-      // If document does not exist, seed it
-      console.log("[FIREBASE] Semeando Firestore (Admin SDK)...");
-      const local = readLocalDB();
-      await docRef.set(local);
-      return local;
-    } catch (err: any) {
-      console.error("[FIREBASE] Erro ao ler Firestore via Admin SDK:", err.message || err);
-    }
-  }
-
-  // Fallback to local DB if Firestore fails or is disabled
-  console.warn("[FIREBASE] Usando banco de dados local db.json (Contingência).");
-  return readLocalDB();
-}
-
-// Write database helper
-async function writeDB(data: any): Promise<void> {
-  const source = getFirestoreDbInstance();
-  let success = false;
-
-  if (source.type === "client") {
-    try {
-      const docRef = docClient(source.db, "system", "lms_database");
-      await setDocClient(docRef, data);
-      console.log("[FIREBASE] Salvo com sucesso no Firestore via Client SDK.");
-      success = true;
-    } catch (err: any) {
-      console.error("[FIREBASE] Erro ao gravar no Firestore via Client SDK:", err.message || err);
-    }
-  } else if (source.type === "admin") {
-    try {
-      const docRef = source.db.collection("system").doc("lms_database");
-      await docRef.set(data);
-      console.log("[FIREBASE] Salvo com sucesso no Firestore via Admin SDK.");
-      success = true;
-    } catch (err: any) {
-      console.error("[FIREBASE] Erro ao gravar no Firestore via Admin SDK:", err.message || err);
-    }
-  }
-
-  // Always write to local backup db.json to guarantee no data loss and maintain backup
-  writeLocalDB(data);
 }
 
 // ==========================================
 // REST API ENDPOINTS
 // ==========================================
 
-// 0. DEBUG FIREBASE (For diagnosing database connection issues in production)
-app.get("/api/debug-firebase", async (req, res) => {
-  const diag: any = {
-    currentTime: new Date().toISOString(),
-    cwd: process.cwd(),
-    dirname: __dirname,
-    configExists: false,
-    configError: null,
-    clientInitError: null,
-    clientReadError: null,
-    adminInitError: null,
-    adminReadError: null,
-    clientDbInitialized: false
-  };
-
-  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-  diag.configPath = configPath;
-  if (fs.existsSync(configPath)) {
-    diag.configExists = true;
-    try {
-      const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-      diag.projectId = firebaseConfig.projectId;
-      diag.firestoreDatabaseId = firebaseConfig.firestoreDatabaseId;
-    } catch (e: any) {
-      diag.configError = e.message || e;
-    }
-  }
-
-  // Test Client DB initialization
-  try {
-    const dbInstance = getFirestoreDb();
-    diag.clientDbInitialized = true;
-    
-    // Try reading
-    const docRef = docClient(dbInstance, "system", "lms_database");
-    const snapshot = await getDocClient(docRef);
-    diag.clientReadSuccess = snapshot.exists();
-    if (snapshot.exists()) {
-      diag.clientKeys = Object.keys(snapshot.data() || {});
-    }
-  } catch (e: any) {
-    diag.clientReadError = e.message || e;
-  }
-
-  // Test Admin DB
-  try {
-    const adminDb = getAdminFirestore();
-    const adminDocRef = adminDb.collection("system").doc("lms_database");
-    const adminSnapshot = await adminDocRef.get();
-    diag.adminReadSuccess = adminSnapshot.exists;
-    if (adminSnapshot.exists) {
-      diag.adminKeys = Object.keys(adminSnapshot.data() || {});
-    }
-  } catch (e: any) {
-    diag.adminReadError = e.message || e;
-  }
-
-  res.json(diag);
-});
-
 // 1. GET FULL DATABASE STATE (For Admin backups or inspection)
-app.get("/api/db", async (req, res) => {
-  const db = await readDB();
+app.get("/api/db", (req, res) => {
+  const db = readDB();
   res.json(db);
 });
 
 // 2. COURSES CRUD
-app.get("/api/courses", async (req, res) => {
-  const db = await readDB();
+app.get("/api/courses", (req, res) => {
+  const db = readDB();
   res.json(db.courses || []);
 });
 
-app.post("/api/courses", async (req, res) => {
-  const db = await readDB();
+app.post("/api/courses", (req, res) => {
+  const db = readDB();
   const course = req.body;
 
   if (!course.id) {
@@ -385,30 +235,30 @@ app.post("/api/courses", async (req, res) => {
     }
   }
 
-  await writeDB(db);
+  writeDB(db);
   res.status(200).json({ success: true, course });
 });
 
-app.delete("/api/courses/:id", async (req, res) => {
-  const db = await readDB();
+app.delete("/api/courses/:id", (req, res) => {
+  const db = readDB();
   const { id } = req.params;
 
   db.courses = db.courses.filter((c: any) => c.id !== id);
   db.modules = db.modules.filter((m: any) => m.courseId !== id);
   db.lessons = db.lessons.filter((l: any) => l.courseId !== id);
 
-  await writeDB(db);
+  writeDB(db);
   res.json({ success: true, message: "Curso e conteúdos removidos." });
 });
 
 // 3. MODULES CRUD
-app.get("/api/modules", async (req, res) => {
-  const db = await readDB();
+app.get("/api/modules", (req, res) => {
+  const db = readDB();
   res.json(db.modules || []);
 });
 
-app.post("/api/modules", async (req, res) => {
-  const db = await readDB();
+app.post("/api/modules", (req, res) => {
+  const db = readDB();
   const mod = req.body;
 
   if (!mod.id) {
@@ -423,29 +273,29 @@ app.post("/api/modules", async (req, res) => {
     }
   }
 
-  await writeDB(db);
+  writeDB(db);
   res.json({ success: true, module: mod });
 });
 
-app.delete("/api/modules/:id", async (req, res) => {
-  const db = await readDB();
+app.delete("/api/modules/:id", (req, res) => {
+  const db = readDB();
   const { id } = req.params;
 
   db.modules = db.modules.filter((m: any) => m.id !== id);
   db.lessons = db.lessons.filter((l: any) => l.moduleId !== id);
 
-  await writeDB(db);
+  writeDB(db);
   res.json({ success: true, message: "Módulo e suas aulas removidos." });
 });
 
 // 4. LESSONS CRUD
-app.get("/api/lessons", async (req, res) => {
-  const db = await readDB();
+app.get("/api/lessons", (req, res) => {
+  const db = readDB();
   res.json(db.lessons || []);
 });
 
-app.post("/api/lessons", async (req, res) => {
-  const db = await readDB();
+app.post("/api/lessons", (req, res) => {
+  const db = readDB();
   const lesson = req.body;
 
   if (!lesson.id) {
@@ -460,28 +310,28 @@ app.post("/api/lessons", async (req, res) => {
     }
   }
 
-  await writeDB(db);
+  writeDB(db);
   res.json({ success: true, lesson });
 });
 
-app.delete("/api/lessons/:id", async (req, res) => {
-  const db = await readDB();
+app.delete("/api/lessons/:id", (req, res) => {
+  const db = readDB();
   const { id } = req.params;
 
   db.lessons = db.lessons.filter((l: any) => l.id !== id);
 
-  await writeDB(db);
+  writeDB(db);
   res.json({ success: true, message: "Aula removida com sucesso." });
 });
 
 // 5. APOSTILAS (Digital E-Books) CRUD
-app.get("/api/apostilas", async (req, res) => {
-  const db = await readDB();
+app.get("/api/apostilas", (req, res) => {
+  const db = readDB();
   res.json(db.apostilas || []);
 });
 
-app.post("/api/apostilas", async (req, res) => {
-  const db = await readDB();
+app.post("/api/apostilas", (req, res) => {
+  const db = readDB();
   const book = req.body;
 
   if (!book.id) {
@@ -496,28 +346,28 @@ app.post("/api/apostilas", async (req, res) => {
     }
   }
 
-  await writeDB(db);
+  writeDB(db);
   res.json({ success: true, apostila: book });
 });
 
-app.delete("/api/apostilas/:id", async (req, res) => {
-  const db = await readDB();
+app.delete("/api/apostilas/:id", (req, res) => {
+  const db = readDB();
   const { id } = req.params;
 
   db.apostilas = db.apostilas.filter((b: any) => b.id !== id);
 
-  await writeDB(db);
+  writeDB(db);
   res.json({ success: true, message: "Apostila excluída." });
 });
 
 // 6. SALES & SIMULATED PAYMENTS
-app.get("/api/sales", async (req, res) => {
-  const db = await readDB();
+app.get("/api/sales", (req, res) => {
+  const db = readDB();
   res.json(db.sales || []);
 });
 
-app.post("/api/sales", async (req, res) => {
-  const db = await readDB();
+app.post("/api/sales", (req, res) => {
+  const db = readDB();
   const sale = req.body;
 
   // Complete simulated sale structure
@@ -546,12 +396,12 @@ app.post("/api/sales", async (req, res) => {
     }
   }
 
-  await writeDB(db);
+  writeDB(db);
   res.json({ success: true, sale });
 });
 
-app.post("/api/sales/:id/approve", async (req, res) => {
-  const db = await readDB();
+app.post("/api/sales/:id/approve", (req, res) => {
+  const db = readDB();
   const { id } = req.params;
 
   const index = db.sales.findIndex((s: any) => s.id === id);
@@ -576,7 +426,7 @@ app.post("/api/sales/:id/approve", async (req, res) => {
       });
     }
 
-    await writeDB(db);
+    writeDB(db);
     res.json({ success: true, sale: db.sales[index] });
   } else {
     res.status(404).json({ error: "Transação não encontrada" });
@@ -584,13 +434,13 @@ app.post("/api/sales/:id/approve", async (req, res) => {
 });
 
 // 7. COUPONS CRUD
-app.get("/api/coupons", async (req, res) => {
-  const db = await readDB();
+app.get("/api/coupons", (req, res) => {
+  const db = readDB();
   res.json(db.coupons || []);
 });
 
-app.post("/api/coupons", async (req, res) => {
-  const db = await readDB();
+app.post("/api/coupons", (req, res) => {
+  const db = readDB();
   const coupon = req.body;
 
   if (!coupon.id) {
@@ -605,28 +455,28 @@ app.post("/api/coupons", async (req, res) => {
     }
   }
 
-  await writeDB(db);
+  writeDB(db);
   res.json({ success: true, coupon });
 });
 
-app.delete("/api/coupons/:id", async (req, res) => {
-  const db = await readDB();
+app.delete("/api/coupons/:id", (req, res) => {
+  const db = readDB();
   const { id } = req.params;
 
   db.coupons = db.coupons.filter((c: any) => c.id !== id);
 
-  await writeDB(db);
+  writeDB(db);
   res.json({ success: true, message: "Cupom deletado." });
 });
 
 // 8. PROGRESS MANIPULATION
-app.get("/api/progress", async (req, res) => {
-  const db = await readDB();
+app.get("/api/progress", (req, res) => {
+  const db = readDB();
   res.json(db.progress || []);
 });
 
-app.post("/api/progress", async (req, res) => {
-  const db = await readDB();
+app.post("/api/progress", (req, res) => {
+  const db = readDB();
   const { studentId, lessonId, courseId, completed, completedAt, favorited } = req.body;
 
   const index = db.progress.findIndex((p: any) => p.studentId === studentId && p.lessonId === lessonId);
@@ -646,18 +496,18 @@ app.post("/api/progress", async (req, res) => {
     });
   }
 
-  await writeDB(db);
+  writeDB(db);
   res.json({ success: true, progress: db.progress });
 });
 
 // 9. COMMENTS PER LESSON (Support / Dúvidas rápidas)
-app.get("/api/comments", async (req, res) => {
-  const db = await readDB();
+app.get("/api/comments", (req, res) => {
+  const db = readDB();
   res.json(db.supportComments || []);
 });
 
-app.post("/api/comments", async (req, res) => {
-  const db = await readDB();
+app.post("/api/comments", (req, res) => {
+  const db = readDB();
   const comment = req.body;
 
   comment.id = `comment_${Date.now()}`;
@@ -678,30 +528,30 @@ app.post("/api/comments", async (req, res) => {
     db.supportComments.push(comment);
   }
 
-  await writeDB(db);
+  writeDB(db);
   res.json({ success: true, comment });
 });
 
 // 10. SUPPORT TICKETS CRUD (Para dúvidas formais de suporte)
-app.get("/api/support", async (req, res) => {
-  const db = await readDB();
+app.get("/api/support", (req, res) => {
+  const db = readDB();
   res.json(db.supportTickets || []);
 });
 
-app.post("/api/support", async (req, res) => {
-  const db = await readDB();
+app.post("/api/support", (req, res) => {
+  const db = readDB();
   const ticket = req.body;
 
   ticket.id = `ticket_${Date.now()}`;
   ticket.createdAt = new Date().toISOString();
 
   db.supportTickets.push(ticket);
-  await writeDB(db);
+  writeDB(db);
   res.json({ success: true, ticket });
 });
 
-app.post("/api/support/:id/answer", async (req, res) => {
-  const db = await readDB();
+app.post("/api/support/:id/answer", (req, res) => {
+  const db = readDB();
   const { id } = req.params;
   const { answerText } = req.body;
 
@@ -709,7 +559,7 @@ app.post("/api/support/:id/answer", async (req, res) => {
   if (index !== -1) {
     db.supportTickets[index].answerText = answerText;
     db.supportTickets[index].answeredAt = new Date().toISOString();
-    await writeDB(db);
+    writeDB(db);
     res.json({ success: true, ticket: db.supportTickets[index] });
   } else {
     res.status(404).json({ error: "Ticket não encontrado." });
@@ -717,13 +567,13 @@ app.post("/api/support/:id/answer", async (req, res) => {
 });
 
 // 11. USERS SIMULATOR (Switching between admin & student)
-app.get("/api/users", async (req, res) => {
-  const db = await readDB();
+app.get("/api/users", (req, res) => {
+  const db = readDB();
   res.json(db.users || []);
 });
 
-app.post("/api/users", async (req, res) => {
-  const db = await readDB();
+app.post("/api/users", (req, res) => {
+  const db = readDB();
   const user = req.body;
 
   if (!user.email) {
@@ -738,19 +588,13 @@ app.post("/api/users", async (req, res) => {
     const oldId = existingUser.id;
     const newId = user.id || oldId;
 
-    // Determine user role (preserving or updating, ensuring admin gets admin)
-    let finalRole = user.role || existingUser.role || 'student';
-    if (user.email.toLowerCase() === 'andrewfmlemos@gmail.com') {
-      finalRole = 'admin';
-    }
-
     // Merge profiles, ensuring we preserve purchasedProducts and role
     const mergedUser = {
       ...existingUser,
       ...user,
       id: newId,
       purchasedProducts: existingUser.purchasedProducts || [],
-      role: finalRole
+      role: existingUser.role || 'student'
     };
 
     db.users[existingUserIndex] = mergedUser;
@@ -786,28 +630,23 @@ app.post("/api/users", async (req, res) => {
       user.id = `user_${Date.now()}`;
     }
     user.purchasedProducts = user.purchasedProducts || [];
-    
-    let finalRole = user.role || 'student';
-    if (user.email.toLowerCase() === 'andrewfmlemos@gmail.com') {
-      finalRole = 'admin';
-    }
-    user.role = finalRole;
+    user.role = user.role || 'student';
     db.users.push(user);
   }
 
-  await writeDB(db);
+  writeDB(db);
   const found = db.users.find((u: any) => u.email.toLowerCase() === user.email.toLowerCase());
   res.json({ success: true, user: found });
 });
 
 // 12. CERTIFICATES GENERATION
-app.get("/api/certificates", async (req, res) => {
-  const db = await readDB();
+app.get("/api/certificates", (req, res) => {
+  const db = readDB();
   res.json(db.certificates || []);
 });
 
-app.post("/api/certificates/issue", async (req, res) => {
-  const db = await readDB();
+app.post("/api/certificates/issue", (req, res) => {
+  const db = readDB();
   const { studentId, studentName, courseId, courseTitle } = req.body;
 
   // Check if already issued
@@ -828,12 +667,12 @@ app.post("/api/certificates/issue", async (req, res) => {
   };
 
   db.certificates.push(cert);
-  await writeDB(db);
+  writeDB(db);
   res.json({ success: true, certificate: cert });
 });
 
-app.get("/api/certificates/validate/:code", async (req, res) => {
-  const db = await readDB();
+app.get("/api/certificates/validate/:code", (req, res) => {
+  const db = readDB();
   const { code } = req.params;
   const cert = db.certificates.find((c: any) => c.validationCode.toUpperCase() === code.toUpperCase());
   if (cert) {
@@ -1082,6 +921,9 @@ REGRAS CRÍTICAS DE ESTILO:
 // ==========================================
 
 async function startServer() {
+  // Sincronizar banco de dados antes de iniciar o servidor
+  await syncFromFirestore();
+
   const isDev = process.env.NODE_ENV === "development" || (process.env.NODE_ENV !== "production" && !fs.existsSync(path.join(process.cwd(), "dist", "index.html")));
 
   if (isDev) {
