@@ -4,11 +4,13 @@ import VisitorCatalog from './components/VisitorCatalog';
 import Checkout from './components/Checkout';
 import StudentPortal from './components/StudentPortal';
 import AdminPanel from './components/AdminPanel';
+import AuthModal from './components/AuthModal';
+import { auth, signOut, onAuthStateChanged } from './utils/firebase';
 import { getDirectDriveUrl } from './utils/image';
 import { cleanCitations } from './utils/text';
 import { 
   Sparkles, ShieldCheck, HelpCircle, BookOpen, UserCheck, 
-  Crown, LogOut, ChevronRight, Eye, Play, CheckCircle2, RefreshCw 
+  Crown, LogOut, ChevronRight, Eye, Play, CheckCircle2, RefreshCw, Key, Download
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -41,6 +43,53 @@ export default function App() {
 
   // Loading flag
   const [loading, setLoading] = useState(true);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+
+  // Synchronize authenticated Firebase users with Express database
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        setLoading(true);
+        try {
+          // Fetch fresh list of users first to see if they already exist
+          const resUsers = await fetch('/api/users');
+          const dataUsers: User[] = await resUsers.json();
+          setUsers(dataUsers);
+
+          const existingUser = dataUsers.find(u => u.email.toLowerCase() === firebaseUser.email?.toLowerCase());
+
+          // Post to sync/create profile
+          const syncRes = await fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: firebaseUser.uid,
+              name: firebaseUser.displayName || existingUser?.name || firebaseUser.email?.split('@')[0] || "Aluno",
+              email: firebaseUser.email || "",
+              avatarUrl: firebaseUser.photoURL || existingUser?.avatarUrl || "",
+              role: firebaseUser.email?.toLowerCase() === 'andrewfmlemos@gmail.com' ? 'admin' : (existingUser?.role || 'student')
+            })
+          });
+
+          if (syncRes.ok) {
+            const syncData = await syncRes.json();
+            const loggedInUser: User = syncData.user;
+            setCurrentUser(loggedInUser);
+            setCurrentRole(loggedInUser.role);
+          }
+        } catch (err) {
+          console.error('Erro ao sincronizar usuário:', err);
+        } finally {
+          setLoading(false);
+        }
+      } else {
+        setCurrentUser(null);
+        setCurrentRole('visitor');
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   // 1. FETCH ALL DATA FROM BACKEND REST API
   const fetchData = async () => {
@@ -92,17 +141,6 @@ export default function App() {
       setSupportTickets(dataSupport);
       setComments(dataComments);
       setCertificates(dataCertificates);
-
-      // Handle default logged-in users simulation
-      if (dataUsers && dataUsers.length > 0) {
-        // Default to public visitor, but preload admin forAndrew and student for Mariana
-        const adminObj = dataUsers.find((u: any) => u.role === 'admin') || null;
-        const studentObj = dataUsers.find((u: any) => u.role === 'student') || null;
-
-        if (currentRole === 'admin' && adminObj) setCurrentUser(adminObj);
-        else if (currentRole === 'student' && studentObj) setCurrentUser(studentObj);
-        else setCurrentUser(null);
-      }
     } catch (err) {
       console.error('Erro ao buscar dados do Express:', err);
     } finally {
@@ -112,7 +150,7 @@ export default function App() {
 
   useEffect(() => {
     fetchData();
-  }, [currentRole]);
+  }, []);
 
   // 2. BACKEND MUTATIONS HELPERS (CRUD OPERATIONS SINK)
 
@@ -351,65 +389,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-brand-paper flex flex-col font-sans text-brand-ink antialiased selection:bg-brand-wood selection:text-white" id="main-app-shell">
       
-      {/* 1. TOP DEVELOPMENT BAR - SIMULATOR CONTROLS */}
-      <div className="bg-gradient-to-r from-brand-ink via-[#251F1B] to-brand-ink border-b border-brand-wood/20 text-white text-xs px-4 py-2.5 flex flex-col sm:flex-row justify-between items-center gap-3 relative z-50">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-brand-clay fill-brand-clay/20" />
-          <span className="font-serif font-semibold tracking-tight text-sm text-[#F6EFEA]">Academia de Artes Andrew Lemos</span>
-          <span className="text-brand-clay/50">|</span>
-          <span className="text-[#DFD3C3] font-medium font-mono text-[10px]">Simulador de Perfis (Visitante, Aluno, Produtor)</span>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-brand-clay font-bold uppercase text-[9px] tracking-wider">Simular Acesso Como:</span>
-          
-          <div className="flex bg-[#1E1916] p-0.5 rounded-full border border-brand-wood/30">
-            <button
-              onClick={() => {
-                setCurrentRole('visitor');
-                setCheckoutProduct(null);
-                setFreePreviewLesson(null);
-              }}
-              className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${
-                currentRole === 'visitor' 
-                  ? 'bg-brand-wood text-[#FDFCFB] shadow-sm' 
-                  : 'text-neutral-400 hover:text-[#FDFCFB]'
-              }`}
-            >
-              Visitante
-            </button>
-            <button
-              onClick={() => {
-                setCurrentRole('student');
-                setCheckoutProduct(null);
-                setFreePreviewLesson(null);
-              }}
-              className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${
-                currentRole === 'student' 
-                  ? 'bg-brand-wood text-[#FDFCFB] shadow-sm' 
-                  : 'text-neutral-400 hover:text-[#FDFCFB]'
-              }`}
-            >
-              Aluna (Mariana)
-            </button>
-            <button
-              onClick={() => {
-                setCurrentRole('admin');
-                setCheckoutProduct(null);
-                setFreePreviewLesson(null);
-              }}
-              className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${
-                currentRole === 'admin' 
-                  ? 'bg-brand-wood text-[#FDFCFB] shadow-sm' 
-                  : 'text-neutral-400 hover:text-[#FDFCFB]'
-              }`}
-            >
-              Produtor (Andrew)
-            </button>
-          </div>
-        </div>
-      </div>
-
       {/* 2. MAIN HEADER BAR */}
       <header className="glass border-b border-brand-wood/10 sticky top-0 z-40 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex justify-between items-center">
@@ -420,16 +399,45 @@ export default function App() {
             }}
             className="flex items-center gap-3 cursor-pointer group"
           >
-            <div className="w-10 h-10 bg-brand-wood text-white rounded-full flex items-center justify-center font-serif font-semibold text-lg shadow-md border border-brand-clay/30 group-hover:bg-brand-clay transition-all duration-300">
-              AL
+            <div className="w-10 h-10 rounded-full overflow-hidden flex items-center justify-center bg-white shadow-md border border-brand-clay/10 group-hover:scale-105 transition-all duration-300">
+              <img 
+                src={getDirectDriveUrl("https://drive.google.com/file/d/1BEZWW-yg4axZKVhIo_Y9GlRgeGQ3xeqi/view?usp=sharing")} 
+                alt="Logo Andrew Lemos" 
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
             </div>
             <div>
-              <span className="font-serif font-semibold text-base text-brand-ink tracking-tight block">Academia de Artes Andrew Lemos</span>
-              <span className="text-[9px] text-brand-clay font-sans font-semibold uppercase tracking-widest block">Cursos de Artes Plásticas & Infoprodutos</span>
+              <span className="font-serif font-semibold text-base text-brand-ink tracking-tight block leading-tight">Academia de Artes</span>
+              <span className="font-serif font-semibold text-base text-brand-ink tracking-tight block leading-tight">Andrew Lemos</span>
             </div>
           </div>
 
           <div className="flex items-center gap-4">
+            {/* Direct download links - ONLY visible and accessible to the admin/producer */}
+            {currentUser?.role === 'admin' && (
+              <div className="flex items-center gap-2">
+                <a 
+                  href="/api/download-project" 
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded-full font-sans font-bold text-[11px] tracking-wide transition-all border border-amber-200 cursor-pointer shadow-sm shadow-amber-500/5"
+                  id="btn-download-targz"
+                  title="Baixar projeto completo como TAR.GZ (extraia com tar -xzf)"
+                >
+                  <Download className="w-3 h-3" />
+                  <span>Exportar TAR.GZ</span>
+                </a>
+                <a 
+                  href="/api/download-zip" 
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 rounded-full font-sans font-bold text-[11px] tracking-wide transition-all border border-emerald-200 cursor-pointer shadow-sm shadow-emerald-500/5"
+                  id="btn-download-zip"
+                  title="Baixar projeto completo como ZIP (extraia com unzip)"
+                >
+                  <Download className="w-3 h-3" />
+                  <span>Exportar ZIP</span>
+                </a>
+              </div>
+            )}
+
             {currentUser ? (
               <div className="flex items-center gap-3">
                 <img 
@@ -446,11 +454,31 @@ export default function App() {
                     {currentUser.role === 'admin' ? 'Professor / Produtor' : 'Membro da Academia'}
                   </span>
                 </div>
+                {auth.currentUser && (
+                  <button
+                    onClick={() => signOut(auth)}
+                    className="p-2 text-brand-clay hover:text-red-600 rounded-full hover:bg-red-50 transition-all ml-1 cursor-pointer"
+                    title="Sair da Conta"
+                    id="btn-logout"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             ) : (
-              <span className="text-[10px] text-brand-clay font-sans font-bold uppercase tracking-wider bg-white/60 px-3 py-1.5 rounded-full border border-brand-clay/10">
-                Acesso Visitante
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="hidden sm:inline-block text-[10px] text-brand-clay font-sans font-bold uppercase tracking-wider bg-white/60 px-3 py-1.5 rounded-full border border-brand-clay/10">
+                  Acesso Visitante
+                </span>
+                <button
+                  onClick={() => setAuthModalOpen(true)}
+                  className="bg-brand-wood hover:bg-brand-clay text-white px-4 py-2 rounded-full font-sans font-semibold text-xs tracking-wide transition-all shadow-md shadow-brand-wood/10 flex items-center gap-1.5 cursor-pointer"
+                  id="btn-login-header"
+                >
+                  <Key className="w-3.5 h-3.5" />
+                  Entrar
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -472,7 +500,7 @@ export default function App() {
                   <Checkout 
                     product={checkoutProduct}
                     productType={checkoutType}
-                    currentUser={users.find(u => u.role === 'student') || users[0]}
+                    currentUser={currentUser || users.find(u => u.role === 'student') || users[0]}
                     coupons={coupons}
                     onCancel={() => setCheckoutProduct(null)}
                     onPaymentSuccess={() => {
@@ -641,6 +669,13 @@ export default function App() {
         <p className="mt-1">© 2026. Cursos e apostilas de artes plásticas de visualização protegida. Todos os direitos reservados.</p>
         <p className="mt-2 text-[10px] text-brand-clay/60 uppercase tracking-widest font-mono">Infoprodutos de visualização protegida</p>
       </footer>
+
+      {/* Auth Modal overlay */}
+      <AuthModal 
+        isOpen={authModalOpen} 
+        onClose={() => setAuthModalOpen(false)} 
+        onSuccess={() => fetchData()} 
+      />
     </div>
   );
 }

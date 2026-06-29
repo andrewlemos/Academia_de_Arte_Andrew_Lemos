@@ -5,6 +5,7 @@ import { execSync } from "child_process";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import AdmZip from "adm-zip";
 
 dotenv.config();
 
@@ -13,6 +14,50 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const DB_PATH = path.join(process.cwd(), "data", "db.json");
 
 app.use(express.json());
+
+// API route to download the entire project as a ZIP
+app.get("/api/download-zip", (req, res) => {
+  try {
+    const zip = new AdmZip();
+    
+    function addDirToZip(currentDir: string, zipPath: string) {
+      const items = fs.readdirSync(currentDir);
+      for (const item of items) {
+        const fullPath = path.join(currentDir, item);
+        const stat = fs.statSync(fullPath);
+        const relativeZipPath = zipPath ? `${zipPath}/${item}` : item;
+        
+        // Exclude system, build and package-lock folders
+        if (
+          item === "node_modules" || 
+          item === ".git" || 
+          item === "dist" || 
+          item === ".next" ||
+          item === "package-lock.json" ||
+          item === "projeto.zip"
+        ) {
+          continue;
+        }
+        
+        if (stat.isDirectory()) {
+          addDirToZip(fullPath, relativeZipPath);
+        } else {
+          zip.addLocalFile(fullPath, zipPath);
+        }
+      }
+    }
+
+    addDirToZip(process.cwd(), "");
+
+    const zipBuffer = zip.toBuffer();
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", "attachment; filename=projeto.zip");
+    res.send(zipBuffer);
+  } catch (err: any) {
+    console.error("Erro ao criar pacote ZIP:", err);
+    res.status(500).send("Erro ao criar pacote ZIP: " + err.message);
+  }
+});
 
 // API route to download the entire project as a tar.gz
 app.get("/api/download-project", (req, res) => {
@@ -466,20 +511,67 @@ app.post("/api/users", (req, res) => {
   const db = readDB();
   const user = req.body;
 
-  if (!user.id) {
-    user.id = `user_${Date.now()}`;
-    db.users.push(user);
-  } else {
-    const index = db.users.findIndex((u: any) => u.id === user.id);
-    if (index !== -1) {
-      db.users[index] = { ...db.users[index], ...user };
-    } else {
-      db.users.push(user);
+  if (!user.email) {
+    return res.status(400).json({ error: "E-mail é obrigatório." });
+  }
+
+  // Find by email to link and preserve existing data
+  const existingUserIndex = db.users.findIndex((u: any) => u.email.toLowerCase() === user.email.toLowerCase());
+
+  if (existingUserIndex !== -1) {
+    const existingUser = db.users[existingUserIndex];
+    const oldId = existingUser.id;
+    const newId = user.id || oldId;
+
+    // Merge profiles, ensuring we preserve purchasedProducts and role
+    const mergedUser = {
+      ...existingUser,
+      ...user,
+      id: newId,
+      purchasedProducts: existingUser.purchasedProducts || [],
+      role: existingUser.role || 'student'
+    };
+
+    db.users[existingUserIndex] = mergedUser;
+
+    // If the ID has changed, migrate all references in the database
+    if (oldId !== newId) {
+      console.log(`Migrating references from ${oldId} to ${newId}`);
+      
+      if (db.sales) {
+        db.sales.forEach((s: any) => {
+          if (s.studentId === oldId) s.studentId = newId;
+        });
+      }
+      if (db.progress) {
+        db.progress.forEach((p: any) => {
+          if (p.studentId === oldId) p.studentId = newId;
+        });
+      }
+      if (db.supportTickets) {
+        db.supportTickets.forEach((t: any) => {
+          if (t.studentId === oldId) t.studentId = newId;
+        });
+      }
+      if (db.certificates) {
+        db.certificates.forEach((c: any) => {
+          if (c.studentId === oldId) c.studentId = newId;
+        });
+      }
     }
+  } else {
+    // Create a brand new user
+    if (!user.id) {
+      user.id = `user_${Date.now()}`;
+    }
+    user.purchasedProducts = user.purchasedProducts || [];
+    user.role = user.role || 'student';
+    db.users.push(user);
   }
 
   writeDB(db);
-  res.json({ success: true, user });
+  const found = db.users.find((u: any) => u.email.toLowerCase() === user.email.toLowerCase());
+  res.json({ success: true, user: found });
 });
 
 // 12. CERTIFICATES GENERATION

@@ -18,6 +18,7 @@ export interface Course {
   freeModules: string[]; // List of module IDs that are available as free preview
   rating?: number;
   duration?: string;
+  status?: 'ativo' | 'breve' | 'desativado';
 }
 
 export interface Module {
@@ -70,6 +71,7 @@ export interface Apostila {
     title: string;
     content: string; // HTML or Markdown
   }[];
+  status?: 'ativo' | 'breve' | 'desativado';
 }
 
 export interface Sale {

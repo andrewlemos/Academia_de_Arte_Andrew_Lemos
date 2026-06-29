@@ -332,7 +332,7 @@ export default function AdminPanel({
             <div className="flex justify-between items-center">
               <h2 className="text-xl font-serif font-bold text-brand-ink">Gerenciamento de Cursos</h2>
               <button
-                onClick={() => setEditingCourse({ id: '', title: '', description: '', coverUrl: '', price: 197, category: 'Artesanato', freeModules: [] })}
+                onClick={() => setEditingCourse({ id: '', title: '', description: '', coverUrl: '', price: 197, category: 'Artesanato', freeModules: [], status: 'ativo' })}
                 className="inline-flex items-center gap-1.5 bg-brand-wood hover:bg-brand-clay text-[#FDFCFB] text-[10px] font-sans font-medium uppercase tracking-widest px-5 py-2.5 rounded-full transition-all shadow-md"
               >
                 <Plus className="w-4 h-4" /> Novo Curso
@@ -428,27 +428,61 @@ export default function AdminPanel({
                           className="w-14 h-14 object-cover rounded-2xl border border-brand-wood/5"
                         />
                         <div>
-                          <h3 className="font-serif font-bold text-brand-ink text-base leading-snug">{course.title}</h3>
+                          <h3 className="font-serif font-bold text-brand-ink text-base leading-snug flex items-center gap-2 flex-wrap">
+                            {course.title}
+                            {course.status === 'breve' && (
+                              <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[9px] font-sans font-bold uppercase tracking-wider rounded-md border border-amber-200">
+                                Em Breve
+                              </span>
+                            )}
+                            {course.status === 'desativado' && (
+                              <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-[9px] font-sans font-bold uppercase tracking-wider rounded-md border border-gray-200">
+                                Desativado
+                              </span>
+                            )}
+                            {(course.status === 'ativo' || !course.status) && (
+                              <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[9px] font-sans font-bold uppercase tracking-wider rounded-md border border-emerald-200">
+                                Ativo
+                              </span>
+                            )}
+                          </h3>
                           <span className="text-[10px] text-brand-clay font-sans font-medium">{course.category} • R$ {course.price},00 • {totalModCount} módulos</span>
                         </div>
                       </div>
 
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* Status Quick Selector */}
+                        <div className="flex items-center gap-1.5 bg-brand-paper px-3 py-1.5 rounded-full border border-brand-wood/10 h-9">
+                          <span className="text-[9px] font-sans font-extrabold text-brand-clay uppercase tracking-wider">Status:</span>
+                          <select
+                            value={course.status || 'ativo'}
+                            onChange={e => onAddCourse({ ...course, status: e.target.value as 'ativo' | 'breve' | 'desativado' })}
+                            className={`bg-transparent text-[10px] font-sans font-black uppercase tracking-wider border-none outline-none cursor-pointer focus:ring-0 p-0 pr-1 ${
+                              course.status === 'breve' ? 'text-amber-800' :
+                              course.status === 'desativado' ? 'text-gray-500' : 'text-emerald-800'
+                            }`}
+                          >
+                            <option value="ativo" className="text-emerald-800 bg-white font-sans font-semibold">Ativo</option>
+                            <option value="breve" className="text-amber-800 bg-white font-sans font-semibold">Em Breve</option>
+                            <option value="desativado" className="text-gray-600 bg-white font-sans font-semibold">Desativado</option>
+                          </select>
+                        </div>
+
                         <button
                           onClick={() => setSelectedCourseForContent(course)}
-                          className="border border-brand-wood text-brand-wood hover:bg-brand-wood hover:text-white font-sans font-medium text-[9px] uppercase tracking-widest px-4 py-2 rounded-full transition-all"
+                          className="border border-brand-wood text-brand-wood hover:bg-brand-wood hover:text-white font-sans font-medium text-[9px] uppercase tracking-widest px-4 py-2 rounded-full transition-all h-9 flex items-center"
                         >
                           Grade Curricular
                         </button>
                         <button
                           onClick={() => setEditingCourse(course)}
-                          className="bg-brand-paper hover:bg-brand-clay/10 text-brand-wood p-2.5 rounded-full border border-brand-wood/10"
+                          className="bg-brand-paper hover:bg-brand-clay/10 text-brand-wood p-2 rounded-full border border-brand-wood/10 h-9 w-9 flex items-center justify-center"
                         >
                           <Edit3 className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => onDeleteCourse(course.id)}
-                          className="bg-red-50 hover:bg-red-100 text-red-600 p-2.5 rounded-full border border-red-100"
+                          className="bg-red-50 hover:bg-red-100 text-red-600 p-2 rounded-full border border-red-100 h-9 w-9 flex items-center justify-center"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -898,9 +932,9 @@ export default function AdminPanel({
             )}
 
             {/* Apostilas Rows */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4">
               {apostilas.map(book => (
-                <div key={book.id} className="bg-white border border-brand-wood/10 rounded-3xl p-5 shadow-sm flex justify-between items-center">
+                <div key={book.id} className="bg-white border border-brand-wood/10 rounded-3xl p-5 shadow-sm flex flex-col md:flex-row gap-4 justify-between md:items-center">
                   <div className="flex gap-4 items-center">
                     <img 
                       src={getDirectDriveUrl(book.coverUrl)} 
@@ -909,22 +943,56 @@ export default function AdminPanel({
                       className="w-10 h-14 object-cover rounded-xl border border-brand-wood/5 flex-shrink-0"
                     />
                     <div>
-                      <h3 className="font-serif font-bold text-brand-ink text-sm leading-snug">{book.title}</h3>
-                      <span className="text-[10px] text-brand-clay font-sans block">{book.chapters.length} capítulos • R$ {book.price},00</span>
+                      <h3 className="font-serif font-bold text-brand-ink text-sm leading-snug flex items-center gap-2 flex-wrap">
+                        {book.title}
+                        {book.status === 'breve' && (
+                          <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[8px] font-sans font-bold uppercase tracking-wider rounded border border-amber-200">
+                            Em Breve
+                          </span>
+                        )}
+                        {book.status === 'desativado' && (
+                          <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-[8px] font-sans font-bold uppercase tracking-wider rounded border border-gray-200">
+                            Desativado
+                          </span>
+                        )}
+                        {(book.status === 'ativo' || !book.status) && (
+                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[8px] font-sans font-bold uppercase tracking-wider rounded border border-emerald-200">
+                            Ativo
+                          </span>
+                        )}
+                      </h3>
+                      <span className="text-[10px] text-brand-clay font-sans block mt-1">{book.chapters.length} capítulos • R$ {book.price},00</span>
                     </div>
                   </div>
 
-                  <div className="flex gap-1 items-center">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Status Quick Selector */}
+                    <div className="flex items-center gap-1.5 bg-brand-paper px-3 py-1.5 rounded-full border border-brand-wood/10 h-9">
+                      <span className="text-[9px] font-sans font-extrabold text-brand-clay uppercase tracking-wider">Status:</span>
+                      <select
+                        value={book.status || 'ativo'}
+                        onChange={e => onAddApostila({ ...book, status: e.target.value as 'ativo' | 'breve' | 'desativado' })}
+                        className={`bg-transparent text-[10px] font-sans font-black uppercase tracking-wider border-none outline-none cursor-pointer focus:ring-0 p-0 pr-1 ${
+                          book.status === 'breve' ? 'text-amber-800' :
+                          book.status === 'desativado' ? 'text-gray-500' : 'text-emerald-800'
+                        }`}
+                      >
+                        <option value="ativo" className="text-emerald-800 bg-white font-sans font-semibold">Ativo</option>
+                        <option value="breve" className="text-amber-800 bg-white font-sans font-semibold">Em Breve</option>
+                        <option value="desativado" className="text-gray-600 bg-white font-sans font-semibold">Desativado</option>
+                      </select>
+                    </div>
+
                     <button 
                       onClick={() => { setPreviewingApostila(book); setPreviewChapterIndex(0); }} 
-                      className="text-brand-wood hover:bg-brand-wood/10 p-2.5 rounded-full border border-brand-wood/15 flex items-center gap-1.5 text-xs font-bold px-3 transition-all"
+                      className="text-brand-wood hover:bg-brand-wood/10 p-2 rounded-full border border-brand-wood/15 flex items-center gap-1.5 text-xs font-bold px-3 transition-all h-9"
                       title="Visualizar Resultado Final"
                     >
                       <Eye className="w-3.5 h-3.5" />
                       <span>Visualizar</span>
                     </button>
-                    <button onClick={() => setEditingApostila(book)} className="text-brand-clay hover:bg-brand-paper p-2.5 rounded-full border border-brand-wood/5"><Edit3 className="w-4 h-4" /></button>
-                    <button onClick={() => onDeleteApostila(book.id)} className="text-red-500 hover:bg-red-50 p-2.5 rounded-full border border-red-100"><Trash2 className="w-4 h-4" /></button>
+                    <button onClick={() => setEditingApostila(book)} className="text-brand-clay hover:bg-brand-paper p-2 rounded-full border border-brand-wood/5 h-9 w-9 flex items-center justify-center"><Edit3 className="w-4 h-4" /></button>
+                    <button onClick={() => onDeleteApostila(book.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-full border border-red-100 h-9 w-9 flex items-center justify-center"><Trash2 className="w-4 h-4" /></button>
                   </div>
                 </div>
               ))}
