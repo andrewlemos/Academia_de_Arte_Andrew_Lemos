@@ -1,0 +1,22 @@
+{
+  "entities": {
+    "system_config": {
+      "title": "System Config",
+      "description": "LMS database state",
+      "type": "object",
+      "properties": {
+        "lms_database": {
+          "type": "object"
+        }
+      }
+    }
+  },
+  "firestore": {
+    "system": {
+      "schema": {
+        "$ref": "#/entities/system_config"
+      },
+      "description": "LMS storage"
+    }
+  }
+}
