@@ -162,52 +162,64 @@ function readLocalDB(): any {
 }
 
 async function readDB(): Promise<any> {
+  const defaultState = {
+    courses: [],
+    modules: [],
+    lessons: [],
+    apostilas: [],
+    users: [],
+    sales: [],
+    coupons: [],
+    progress: [],
+    supportTickets: [],
+    certificates: [],
+    supportComments: []
+  };
+
   if (useLocalOnly || !clientDb) {
-    return readLocalDB();
+    const local = readLocalDB();
+    return { ...defaultState, ...local };
   }
 
   try {
     const docRef = docClient(clientDb, "system", "lms_database");
     const snapshot = await getDocClient(docRef);
     
+    let dbData: any = null;
     if (snapshot.exists()) {
-      const data = snapshot.data();
-      if (data) {
-        return data;
-      }
-    } else {
-      console.log("[FIREBASE] Nenhum dado no Firestore. Executando seed inicial com dados do db.json...");
-      let seedData = {
-        courses: [],
-        modules: [],
-        lessons: [],
-        apostilas: [],
-        users: [],
-        sales: [],
-        coupons: [],
-        progress: [],
-        supportTickets: [],
-        certificates: [],
-        supportComments: []
-      };
+      dbData = snapshot.data();
+    }
+
+    // If the Firestore document does not exist, or does not contain a valid 'courses' array, we need to seed it
+    if (!dbData || !Array.isArray(dbData.courses)) {
+      console.log("[FIREBASE] Nenhum dado válido ou 'courses' ausente no Firestore. Carregando e semeando a partir do db.json...");
+      let seedData = { ...defaultState };
       if (fs.existsSync(DB_PATH)) {
         try {
           const raw = fs.readFileSync(DB_PATH, "utf-8");
-          seedData = JSON.parse(raw);
+          seedData = { ...defaultState, ...JSON.parse(raw) };
         } catch (e) {
           console.error("[FIREBASE] Erro ao ler db.json para seed:", e);
         }
       }
-      await setDocClient(docRef, seedData);
-      console.log("[FIREBASE] Seed inicial enviado para o Firestore.");
+      
+      // Save this complete seed back to Firestore
+      try {
+        await setDocClient(docRef, seedData);
+        console.log("[FIREBASE] Seed inicial completo enviado para o Firestore.");
+      } catch (writeErr: any) {
+        console.error("[FIREBASE] Erro ao gravar seed inicial no Firestore:", writeErr);
+      }
       return seedData;
     }
+
+    // Ensure all required arrays exist in the returned data to avoid undefined errors
+    return { ...defaultState, ...dbData };
   } catch (error: any) {
     console.warn(`[FIREBASE] Não foi possível carregar dados do Firestore (${error.message || error}). O aplicativo usará o banco de dados local db.json.`);
-    useLocalOnly = true;
+    const local = readLocalDB();
+    return { ...defaultState, ...local };
   }
-
-  return readLocalDB();
 }
 
 // Write database helper
