@@ -598,13 +598,19 @@ app.post("/api/users", async (req, res) => {
     const oldId = existingUser.id;
     const newId = user.id || oldId;
 
+    // Determine user role (preserving or updating, ensuring admin gets admin)
+    let finalRole = user.role || existingUser.role || 'student';
+    if (user.email.toLowerCase() === 'andrewfmlemos@gmail.com') {
+      finalRole = 'admin';
+    }
+
     // Merge profiles, ensuring we preserve purchasedProducts and role
     const mergedUser = {
       ...existingUser,
       ...user,
       id: newId,
       purchasedProducts: existingUser.purchasedProducts || [],
-      role: existingUser.role || 'student'
+      role: finalRole
     };
 
     db.users[existingUserIndex] = mergedUser;
@@ -640,7 +646,12 @@ app.post("/api/users", async (req, res) => {
       user.id = `user_${Date.now()}`;
     }
     user.purchasedProducts = user.purchasedProducts || [];
-    user.role = user.role || 'student';
+    
+    let finalRole = user.role || 'student';
+    if (user.email.toLowerCase() === 'andrewfmlemos@gmail.com') {
+      finalRole = 'admin';
+    }
+    user.role = finalRole;
     db.users.push(user);
   }
 
