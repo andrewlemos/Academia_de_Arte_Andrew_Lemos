@@ -7,7 +7,7 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import AdmZip from "adm-zip";
 import * as admin from "firebase-admin";
-import { initializeApp as initFirebaseClient } from "firebase/app";
+import { initializeApp as initFirebaseClient, getApps, getApp } from "firebase/app";
 import { getFirestore as getFirestoreClient, doc as docClient, getDoc as getDocClient, setDoc as setDocClient } from "firebase/firestore";
 
 dotenv.config();
@@ -29,18 +29,29 @@ try {
 
 // Initialize Firebase Client SDK on Server for Firestore operations (bypasses service account IAM permissions issues)
 let clientDb: any = null;
-try {
-  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-  if (fs.existsSync(configPath)) {
-    const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    const clientApp = initFirebaseClient(firebaseConfig);
-    clientDb = getFirestoreClient(clientApp, firebaseConfig.firestoreDatabaseId);
-    console.log("[FIREBASE] Client-side SDK para Firestore inicializado com sucesso no servidor.");
-  } else {
-    console.warn("[FIREBASE] Arquivo firebase-applet-config.json não encontrado para o servidor.");
+
+function getFirestoreDb(): any {
+  if (clientDb) return clientDb;
+  try {
+    const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+    if (fs.existsSync(configPath)) {
+      const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      let clientApp;
+      if (getApps().length === 0) {
+        clientApp = initFirebaseClient(firebaseConfig);
+      } else {
+        clientApp = getApp();
+      }
+      clientDb = getFirestoreClient(clientApp, firebaseConfig.firestoreDatabaseId);
+      console.log("[FIREBASE] Client-side SDK para Firestore inicializado com sucesso no servidor (Lazy).");
+      return clientDb;
+    } else {
+      console.warn("[FIREBASE] Arquivo firebase-applet-config.json não encontrado para o servidor.");
+    }
+  } catch (error) {
+    console.error("[FIREBASE] Erro ao inicializar Client-side SDK (Lazy):", error);
   }
-} catch (error) {
-  console.error("[FIREBASE] Erro ao inicializar Client-side SDK no servidor:", error);
+  throw new Error("[FIREBASE] Firestore client database is not initialized. Config file might be missing or invalid.");
 }
 
 const app = express();
@@ -134,33 +145,6 @@ function getGeminiClient(): GoogleGenAI | null {
 }
 
 // Read database helper
-let useLocalOnly = false;
-
-function readLocalDB(): any {
-  try {
-    if (fs.existsSync(DB_PATH)) {
-      const raw = fs.readFileSync(DB_PATH, "utf-8");
-      return JSON.parse(raw);
-    }
-  } catch (error) {
-    console.error("Erro ao ler banco de dados local:", error);
-  }
-
-  return {
-    courses: [],
-    modules: [],
-    lessons: [],
-    apostilas: [],
-    users: [],
-    sales: [],
-    coupons: [],
-    progress: [],
-    supportTickets: [],
-    certificates: [],
-    supportComments: []
-  };
-}
-
 async function readDB(): Promise<any> {
   const defaultState = {
     courses: [],
@@ -176,68 +160,48 @@ async function readDB(): Promise<any> {
     supportComments: []
   };
 
-  if (useLocalOnly || !clientDb) {
-    const local = readLocalDB();
-    return { ...defaultState, ...local };
+  const dbInstance = getFirestoreDb();
+  const docRef = docClient(dbInstance, "system", "lms_database");
+  const snapshot = await getDocClient(docRef);
+  
+  let dbData: any = null;
+  if (snapshot.exists()) {
+    dbData = snapshot.data();
   }
 
-  try {
-    const docRef = docClient(clientDb, "system", "lms_database");
-    const snapshot = await getDocClient(docRef);
-    
-    let dbData: any = null;
-    if (snapshot.exists()) {
-      dbData = snapshot.data();
-    }
-
-    // If the Firestore document does not exist, or does not contain a valid 'courses' array, we need to seed it
-    if (!dbData || !Array.isArray(dbData.courses)) {
-      console.log("[FIREBASE] Nenhum dado válido ou 'courses' ausente no Firestore. Carregando e semeando a partir do db.json...");
-      let seedData = { ...defaultState };
-      if (fs.existsSync(DB_PATH)) {
-        try {
-          const raw = fs.readFileSync(DB_PATH, "utf-8");
-          seedData = { ...defaultState, ...JSON.parse(raw) };
-        } catch (e) {
-          console.error("[FIREBASE] Erro ao ler db.json para seed:", e);
-        }
-      }
-      
-      // Save this complete seed back to Firestore
+  // If the Firestore document does not exist, or does not contain a valid 'courses' array, we need to seed it
+  if (!dbData || !Array.isArray(dbData.courses)) {
+    console.log("[FIREBASE] Nenhum dado válido ou 'courses' ausente no Firestore. Carregando e semeando a partir do db.json...");
+    let seedData = { ...defaultState };
+    if (fs.existsSync(DB_PATH)) {
       try {
-        await setDocClient(docRef, seedData);
-        console.log("[FIREBASE] Seed inicial completo enviado para o Firestore.");
-      } catch (writeErr: any) {
-        console.error("[FIREBASE] Erro ao gravar seed inicial no Firestore:", writeErr);
+        const raw = fs.readFileSync(DB_PATH, "utf-8");
+        seedData = { ...defaultState, ...JSON.parse(raw) };
+      } catch (e) {
+        console.error("[FIREBASE] Erro ao ler db.json para seed:", e);
       }
-      return seedData;
     }
-
-    // Ensure all required arrays exist in the returned data to avoid undefined errors
-    return { ...defaultState, ...dbData };
-  } catch (error: any) {
-    console.warn(`[FIREBASE] Não foi possível carregar dados do Firestore (${error.message || error}). O aplicativo usará o banco de dados local db.json.`);
-    const local = readLocalDB();
-    return { ...defaultState, ...local };
+    
+    // Save this complete seed back to Firestore
+    await setDocClient(docRef, seedData);
+    console.log("[FIREBASE] Seed inicial completo enviado para o Firestore.");
+    return seedData;
   }
+
+  // Ensure all required arrays exist in the returned data to avoid undefined errors
+  return { ...defaultState, ...dbData };
 }
 
 // Write database helper
 async function writeDB(data: any): Promise<void> {
-  let firebaseSaved = false;
-  if (!useLocalOnly && clientDb) {
-    try {
-      const docRef = docClient(clientDb, "system", "lms_database");
-      await setDocClient(docRef, data);
-      console.log("[FIREBASE] Dados salvos com sucesso no Firestore.");
-      firebaseSaved = true;
-    } catch (error: any) {
-      console.warn(`[FIREBASE] Não foi possível salvar dados no Firestore (${error.message || error}). Usando apenas cópia local.`);
-      useLocalOnly = true;
-    }
-  }
+  const dbInstance = getFirestoreDb();
+  const docRef = docClient(dbInstance, "system", "lms_database");
+  
+  // Save directly to Firestore. If this fails, the error propagates so the request fails cleanly
+  await setDocClient(docRef, data);
+  console.log("[FIREBASE] Dados salvos com sucesso no Firestore.");
 
-  // Also write to local backup db.json so offline mode/ZIP download matches
+  // Also passively write to local backup db.json so offline mode/ZIP download matches
   try {
     const dir = path.dirname(DB_PATH);
     if (!fs.existsSync(dir)) {
@@ -245,11 +209,7 @@ async function writeDB(data: any): Promise<void> {
     }
     fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), "utf-8");
   } catch (error) {
-    console.error("Erro ao salvar cópia local:", error);
-    if (!firebaseSaved && !useLocalOnly) {
-      // If both local and firebase fail, then throw
-      throw error;
-    }
+    console.error("Erro ao salvar backup local do db.json:", error);
   }
 }
 
