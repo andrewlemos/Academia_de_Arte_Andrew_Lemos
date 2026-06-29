@@ -6,8 +6,25 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import AdmZip from "adm-zip";
+import * as admin from "firebase-admin";
+import { getFirestore } from "firebase-admin/firestore";
 
 dotenv.config();
+
+// Initialize Firebase Admin SDK
+try {
+  admin.initializeApp({
+    projectId: "gen-lang-client-0853696923"
+  });
+  console.log("[FIREBASE] Admin SDK inicializado com sucesso.");
+} catch (error) {
+  console.error("[FIREBASE] Erro ao inicializar Admin SDK, tentando inicializar sem config:", error);
+  try {
+    admin.initializeApp();
+  } catch (err) {
+    console.error("[FIREBASE] Falha total ao inicializar Admin SDK:", err);
+  }
+}
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -99,6 +116,50 @@ function getGeminiClient(): GoogleGenAI | null {
   return aiClient;
 }
 
+// Sincronizar dados do Firestore para o arquivo local db.json
+async function syncFromFirestore() {
+  try {
+    console.log("[FIREBASE] Sincronizando dados do Firestore...");
+    const db = getFirestore("ai-studio-plataformadecurs-57ed65e2-5e5e-40bb-b5e1-9c6fa8c753b8");
+    const docRef = db.collection("system").doc("lms_database");
+    const doc = await docRef.get();
+    
+    if (doc.exists) {
+      const data = doc.data();
+      if (data) {
+        console.log("[FIREBASE] Dados recuperados com sucesso do Firestore.");
+        const dir = path.dirname(DB_PATH);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+      }
+    } else {
+      console.log("[FIREBASE] Nenhum dado encontrado no Firestore. Fazendo upload inicial...");
+      if (fs.existsSync(DB_PATH)) {
+        const raw = fs.readFileSync(DB_PATH, "utf-8");
+        const data = JSON.parse(raw);
+        await docRef.set(data);
+        console.log("[FIREBASE] Dados iniciais do db.json enviados para o Firestore.");
+      }
+    }
+  } catch (error) {
+    console.error("[FIREBASE] Erro ao sincronizar do Firestore. Usando o arquivo local como fallback.", error);
+  }
+}
+
+// Salvar dados assincronamente no Firestore
+async function saveToFirestore(data: any) {
+  try {
+    const db = getFirestore("ai-studio-plataformadecurs-57ed65e2-5e5e-40bb-b5e1-9c6fa8c753b8");
+    const docRef = db.collection("system").doc("lms_database");
+    await docRef.set(data);
+    console.log("[FIREBASE] Dados salvos no Firestore com sucesso.");
+  } catch (error) {
+    console.error("[FIREBASE] Erro ao salvar dados no Firestore:", error);
+  }
+}
+
 // Read database helper
 function readDB(): any {
   try {
@@ -133,8 +194,12 @@ function writeDB(data: any): void {
       fs.mkdirSync(dir, { recursive: true });
     }
     fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+    // Sincronizar com o Firestore em background (sem travar a rota Express)
+    saveToFirestore(data).catch((err) => {
+      console.error("[FIREBASE] Erro em background ao salvar no Firestore:", err);
+    });
   } catch (error) {
-    console.error("Erro ao salvar no banco de dados:", error);
+    console.error("Erro ao salvar no banco de dados local:", error);
   }
 }
 
@@ -856,6 +921,9 @@ REGRAS CRÍTICAS DE ESTILO:
 // ==========================================
 
 async function startServer() {
+  // Sincronizar banco de dados antes de iniciar o servidor
+  await syncFromFirestore();
+
   const isDev = process.env.NODE_ENV === "development" || (process.env.NODE_ENV !== "production" && !fs.existsSync(path.join(process.cwd(), "dist", "index.html")));
 
   if (isDev) {
