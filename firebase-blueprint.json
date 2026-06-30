@@ -1,0 +1,234 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered students and administrators in the LMS",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The Firebase User UID" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["admin", "student"] },
+        "avatarUrl": { "type": "string" },
+        "purchasedProducts": { "type": "array" }
+      },
+      "required": ["id", "name", "email", "role"]
+    },
+    "Course": {
+      "title": "Course",
+      "description": "LMS Course offering",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "longDescription": { "type": "string" },
+        "coverUrl": { "type": "string" },
+        "category": { "type": "string" },
+        "price": { "type": "number" },
+        "freeModules": { "type": "array" },
+        "rating": { "type": "number" },
+        "duration": { "type": "string" },
+        "status": { "type": "string", "enum": ["ativo", "breve", "desativado"] }
+      },
+      "required": ["id", "title", "description", "coverUrl", "category", "price", "freeModules"]
+    },
+    "Module": {
+      "title": "Module",
+      "description": "A module containing several lessons inside a course",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "courseId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "coverUrl": { "type": "string" },
+        "order": { "type": "number" }
+      },
+      "required": ["id", "courseId", "title", "description", "order"]
+    },
+    "Lesson": {
+      "title": "Lesson",
+      "description": "An individual lesson within a module",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "moduleId": { "type": "string" },
+        "courseId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "videoUrl": { "type": "string" },
+        "textContent": { "type": "string" },
+        "materials": { "type": "array" },
+        "downloadFiles": { "type": "array" },
+        "order": { "type": "number" },
+        "duration": { "type": "string" },
+        "quiz": { "type": "array" }
+      },
+      "required": ["id", "moduleId", "courseId", "title", "description", "order"]
+    },
+    "Apostila": {
+      "title": "Apostila",
+      "description": "A digital E-book / booklet offering",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "longDescription": { "type": "string" },
+        "coverUrl": { "type": "string" },
+        "price": { "type": "number" },
+        "chapters": { "type": "array" },
+        "status": { "type": "string", "enum": ["ativo", "breve", "desativado"] }
+      },
+      "required": ["id", "title", "description", "coverUrl", "price", "chapters"]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "Purchase transaction records for courses and apostilas",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentEmail": { "type": "string" },
+        "productId": { "type": "string" },
+        "productTitle": { "type": "string" },
+        "productType": { "type": "string", "enum": ["course", "apostila"] },
+        "pricePaid": { "type": "number" },
+        "couponUsed": { "type": "string" },
+        "paymentMethod": { "type": "string", "enum": ["credit_card", "pix", "boleto"] },
+        "paymentStatus": { "type": "string", "enum": ["approved", "pending", "failed"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "studentName", "studentEmail", "productId", "productTitle", "productType", "pricePaid", "paymentMethod", "paymentStatus", "createdAt"]
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "Discount coupons for purchasing products",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "discountPercent": { "type": "number" },
+        "expiresAt": { "type": "string" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "code", "discountPercent", "expiresAt", "active"]
+    },
+    "StudentProgress": {
+      "title": "StudentProgress",
+      "description": "Tracks student progress and favorites per lesson",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "lessonId": { "type": "string" },
+        "courseId": { "type": "string" },
+        "completed": { "type": "boolean" },
+        "completedAt": { "type": "string" },
+        "favorited": { "type": "boolean" }
+      },
+      "required": ["studentId", "lessonId", "courseId", "completed"]
+    },
+    "SupportTicket": {
+      "title": "SupportTicket",
+      "description": "Support tickets for help requests or practical submissions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentEmail": { "type": "string" },
+        "courseId": { "type": "string" },
+        "lessonId": { "type": "string" },
+        "lessonTitle": { "type": "string" },
+        "queryText": { "type": "string" },
+        "answerText": { "type": "string" },
+        "answeredAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "type": { "type": "string", "enum": ["question", "practical_work"] }
+      },
+      "required": ["id", "studentId", "studentName", "studentEmail", "courseId", "lessonId", "lessonTitle", "queryText", "createdAt"]
+    },
+    "Certificate": {
+      "title": "Certificate",
+      "description": "Issued course completion certificates",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "courseId": { "type": "string" },
+        "courseTitle": { "type": "string" },
+        "issuedAt": { "type": "string" },
+        "validationCode": { "type": "string" }
+      },
+      "required": ["id", "studentId", "studentName", "courseId", "courseTitle", "issuedAt", "validationCode"]
+    },
+    "SupportComment": {
+      "title": "SupportComment",
+      "description": "Public comments / discussions within an individual lesson",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "lessonId": { "type": "string" },
+        "courseId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "userRole": { "type": "string", "enum": ["admin", "student"] },
+        "avatarUrl": { "type": "string" },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "replies": { "type": "array" }
+      },
+      "required": ["id", "lessonId", "courseId", "userName", "userEmail", "userRole", "comment", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/courses/{courseId}": {
+      "schema": "Course",
+      "description": "Collection of courses in the platform"
+    },
+    "/modules/{moduleId}": {
+      "schema": "Module",
+      "description": "Collection of modules inside courses"
+    },
+    "/lessons/{lessonId}": {
+      "schema": "Lesson",
+      "description": "Collection of lessons inside modules"
+    },
+    "/apostilas/{ebookId}": {
+      "schema": "Apostila",
+      "description": "Collection of ebooks or digital booklets"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of users and their profile details"
+    },
+    "/sales/{saleId}": {
+      "schema": "Sale",
+      "description": "Collection of purchase transaction history records"
+    },
+    "/coupons/{couponId}": {
+      "schema": "Coupon",
+      "description": "Collection of discount coupons"
+    },
+    "/progress/{progressId}": {
+      "schema": "StudentProgress",
+      "description": "Collection of lesson-level student progress and favorites"
+    },
+    "/supportTickets/{ticketId}": {
+      "schema": "SupportTicket",
+      "description": "Collection of direct student support tickets"
+    },
+    "/certificates/{certId}": {
+      "schema": "Certificate",
+      "description": "Collection of validation and authenticity certificates"
+    },
+    "/supportComments/{commentId}": {
+      "schema": "SupportComment",
+      "description": "Collection of public comment boards per lesson"
+    }
+  }
+}
