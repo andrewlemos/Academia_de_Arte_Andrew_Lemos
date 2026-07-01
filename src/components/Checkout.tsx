@@ -1,184 +1,137 @@
-import React, { useState } from 'react';
-import { Course, Apostila, Coupon, Sale, User } from '../types';
-import { CreditCard, QrCode, Barcode, Sparkles, CheckCircle2, Ticket, ArrowLeft, Loader2 } from 'lucide-react';
-import { motion } from 'motion/react';
-import { getDirectDriveUrl } from '../utils/image';
+import React, { useState, useEffect } from "react";
+import { Course, Apostila, Coupon, Sale, User } from "../types";
+import { CreditCard, QrCode, Barcode, Sparkles, CheckCircle2, Ticket, ArrowLeft, Loader2, ShieldAlert } from "lucide-react";
+import { getDirectDriveUrl } from "../utils/image";
+import { apiFetch } from "../utils/firebase";
+
+const fetch = apiFetch;
 
 interface CheckoutProps {
-  product: Course | Apostila;
-  productType: 'course' | 'apostila';
+  product?: Course | Apostila;
+  productType?: "course" | "apostila";
+  cartItems?: { product: Course | Apostila; type: "course" | "apostila" }[];
   currentUser: User;
   onPaymentSuccess: (newSale: Sale) => void;
   onCancel: () => void;
   coupons: Coupon[];
+  onClearCart?: () => void;
 }
 
 export default function Checkout({
   product,
   productType,
+  cartItems = [],
   currentUser,
   onPaymentSuccess,
   onCancel,
-  coupons
+  coupons,
+  onClearCart,
 }: CheckoutProps) {
-  const [couponCode, setCouponCode] = useState('');
-  const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
-  const [couponError, setCouponError] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'credit_card' | 'pix' | 'boleto'>('credit_card');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [successState, setSuccessState] = useState<Sale | null>(null);
+  // Determine if we are checking out the cart or a single direct product
+  const itemsToBuy = cartItems.length > 0 
+    ? cartItems 
+    : (product && productType ? [{ product, type: productType }] : []);
 
-  // Form Fields
+  const [couponCode, setCouponCode] = useState("");
+  const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
+  const [couponError, setCouponError] = useState("");
+  
+  // Choice of provider: 'stripe' or 'mercadopago'
+  const [gatewayProvider, setGatewayProvider] = useState<"stripe" | "mercadopago">("mercadopago");
+  
+  // Specific method to tell the gateways: 'credit_card', 'pix' or 'boleto'
+  const [paymentMethod, setPaymentMethod] = useState<"credit_card" | "pix" | "boleto">("pix");
+  
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [checkoutError, setCheckoutError] = useState("");
+
   const [formData, setFormData] = useState({
-    name: currentUser?.name || '',
-    email: currentUser?.email || '',
-    cardNumber: '4111 2222 3333 4444',
-    cardName: currentUser?.name?.toUpperCase() || 'ANDREW LEMOS',
-    cardExpiry: '12/31',
-    cardCvv: '123'
+    name: currentUser?.name || "",
+    email: currentUser?.email || "",
   });
 
-  const basePrice = product.price;
-  const discountAmount = appliedCoupon ? (basePrice * appliedCoupon.discountPercent) / 100 : 0;
-  const finalPrice = basePrice - discountAmount;
+  // Calculate totals from items list
+  const subtotal = itemsToBuy.reduce((acc, item) => acc + item.product.price, 0);
+  const discountAmount = appliedCoupon ? (subtotal * appliedCoupon.discountPercent) / 100 : 0;
+  const finalPrice = subtotal - discountAmount;
+
+  // Auto-set gateway provider recommendation
+  useEffect(() => {
+    if (paymentMethod === "credit_card") {
+      setGatewayProvider("stripe"); // Stripe is world class for card
+    } else {
+      setGatewayProvider("mercadopago"); // Mercado Pago is local king of Pix/Boleto
+    }
+  }, [paymentMethod]);
 
   const handleApplyCoupon = () => {
-    setCouponError('');
+    setCouponError("");
     const code = couponCode.trim().toUpperCase();
-    const found = coupons.find(c => c.code === code && c.active);
-    
+    const found = coupons.find((c) => c.code === code && c.active);
+
     if (found) {
       setAppliedCoupon(found);
     } else {
-      setCouponError('Cupom inválido, expirado ou inativo.');
+      setCouponError("Cupom inválido, expirado ou inativo.");
     }
   };
 
   const handleRemoveCoupon = () => {
     setAppliedCoupon(null);
-    setCouponCode('');
-    setCouponError('');
+    setCouponCode("");
+    setCouponError("");
   };
 
   const handleCheckoutSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
+    setCheckoutError("");
 
-    // Simulate backend response delay
-    await new Promise(resolve => setTimeout(resolve, 1800));
+    if (itemsToBuy.length === 0) {
+      setCheckoutError("Nenhum item selecionado para compra.");
+      setIsProcessing(false);
+      return;
+    }
 
-    const salePayload: Partial<Sale> = {
+    const payload = {
       studentId: currentUser?.id || `user_student_${Date.now()}`,
       studentName: formData.name,
       studentEmail: formData.email,
-      productId: product.id,
-      productTitle: product.title,
-      productType: productType,
-      pricePaid: finalPrice,
-      couponUsed: appliedCoupon?.code || '',
-      paymentMethod: paymentMethod,
-      paymentStatus: paymentMethod === 'boleto' ? 'pending' : 'approved'
+      cartItems: itemsToBuy.map((item) => ({ id: item.product.id, type: item.type })),
+      couponCode: appliedCoupon?.code || undefined,
     };
 
     try {
-      const response = await fetch('/api/sales', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(salePayload)
+      // Direct integration with Stripe or Mercado Pago backend routing
+      const endpoint = gatewayProvider === "stripe" 
+        ? "/api/v1/sales/checkout/stripe" 
+        : "/api/v1/sales/checkout/mercadopago";
+
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       });
+
       const data = await response.json();
-      if (data.success) {
-        setSuccessState(data.sale);
+
+      if (data.success && data.checkoutUrl) {
+        // Redireciona para o checkout oficial seguro e criptografado da Stripe ou Mercado Pago
+        window.location.href = data.checkoutUrl;
+      } else {
+        throw new Error(data.error || "Falha ao iniciar transação no gateway de pagamentos.");
       }
-    } catch (err) {
-      console.error('Erro na requisição do checkout:', err);
-    } finally {
+    } catch (err: any) {
+      console.error("Erro no processamento do checkout:", err);
+      setCheckoutError(err.message || "Erro de conexão ao servidor de pagamentos.");
       setIsProcessing(false);
     }
   };
 
-  // Rendering Checkout Success Screen
-  if (successState) {
-    return (
-      <div className="max-w-xl mx-auto bg-white p-8 md:p-12 rounded-3xl border border-brand-wood/10 shadow-xl text-center space-y-6" id="checkout-success-view">
-        <div className="w-16 h-16 bg-brand-clay/10 text-brand-wood rounded-full flex items-center justify-center mx-auto border border-brand-clay/20">
-          <CheckCircle2 className="w-9 h-9" />
-        </div>
-        <div className="space-y-2">
-          <h2 className="text-2xl font-serif font-bold text-brand-ink">Inscrição Confirmada!</h2>
-          <p className="text-brand-clay text-sm font-sans">
-            {successState.paymentStatus === 'approved' 
-              ? 'Seu acesso imediato já está disponível na sua biblioteca do Aluno.'
-              : 'Seu boleto foi gerado e aguarda compensação bancária.'}
-          </p>
-        </div>
-
-        <div className="bg-brand-paper rounded-2xl p-5 text-left border border-brand-wood/5 space-y-3.5">
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-brand-clay uppercase font-bold tracking-wider text-[10px]">Transação</span>
-            <span className="text-brand-ink font-mono font-semibold">{successState.id}</span>
-          </div>
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-brand-clay uppercase font-bold tracking-wider text-[10px]">Produto</span>
-            <span className="text-brand-ink font-serif font-bold truncate max-w-[200px]">{successState.productTitle}</span>
-          </div>
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-brand-clay uppercase font-bold tracking-wider text-[10px]">Valor Pago</span>
-            <span className="text-brand-wood font-serif font-bold text-base">R$ {successState.pricePaid},00</span>
-          </div>
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-brand-clay uppercase font-bold tracking-wider text-[10px]">Status do Pagamento</span>
-            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-              successState.paymentStatus === 'approved' 
-                ? 'bg-brand-wood/10 text-brand-wood' 
-                : 'bg-brand-clay/10 text-brand-clay'
-            }`}>
-              {successState.paymentStatus === 'approved' ? 'Aprovado' : 'Aguardando Compensação'}
-            </span>
-          </div>
-        </div>
-
-        {paymentMethod === 'pix' && (
-          <div className="bg-brand-paper rounded-2xl p-5 border border-brand-wood/10 text-center space-y-3">
-            <span className="text-xs text-brand-wood font-sans font-bold block uppercase tracking-widest">Pix Copia e Cola</span>
-            <code className="text-[10px] block p-3 bg-brand-ink text-[#F6EFEA] rounded-xl break-all select-all select-none">
-              00020101021226870014BR.GOV.BCB.PIX2565pix.andrewlemos.com/lms/sale_{Date.now()}5204000053039865802BR5912Andrew_Lemos6009Sao_Paulo62070503LMS
-            </code>
-            <p className="text-[10px] text-brand-clay">Efetue o pagamento simulado para ativar instantaneamente.</p>
-          </div>
-        )}
-
-        {paymentMethod === 'boleto' && (
-          <div className="bg-brand-paper rounded-2xl p-5 border border-brand-wood/10 text-center space-y-3">
-            <span className="text-xs text-brand-wood font-sans font-bold block uppercase tracking-widest">Código de Barras</span>
-            <code className="text-[11px] block p-3 bg-brand-ink text-brand-clay rounded-xl tracking-wider">
-              34191.79001 01043.513184 91020.150008 7 987200000{finalPrice}00
-            </code>
-            <button 
-              onClick={() => window.open('#', '_blank')}
-              className="inline-flex items-center gap-1.5 text-xs text-brand-wood font-bold hover:underline"
-            >
-              <Barcode className="w-4 h-4" /> Baixar PDF do Boleto
-            </button>
-          </div>
-        )}
-
-        <div className="pt-2">
-          <button
-            onClick={() => onPaymentSuccess(successState)}
-            className="w-full py-3.5 bg-brand-wood hover:bg-brand-clay text-[#FDFCFB] rounded-full text-sm font-sans font-medium shadow-md transition-all uppercase tracking-widest"
-          >
-            Acessar Área do Aluno
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="max-w-4xl mx-auto space-y-6" id="checkout-main-container">
       {/* Back navigation header */}
-      <button 
+      <button
         onClick={onCancel}
         className="inline-flex items-center gap-2 text-brand-clay hover:text-brand-wood font-medium text-sm transition-colors font-sans"
       >
@@ -186,7 +139,7 @@ export default function Checkout({
       </button>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left Side: Payment Methods Form */}
+        {/* Left Side: Billing Details Form */}
         <div className="lg:col-span-7 bg-white p-6 md:p-8 rounded-3xl border border-brand-wood/10 shadow-sm space-y-6">
           <h2 className="text-xl font-serif font-bold text-brand-ink">Dados de Faturamento</h2>
 
@@ -195,39 +148,53 @@ export default function Checkout({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-brand-clay uppercase tracking-widest">Nome Completo</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   required
                   value={formData.name}
-                  onChange={e => setFormData({ ...formData, name: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder="Seu nome completo"
                   className="w-full px-4 py-2.5 rounded-full border border-brand-wood/20 text-sm focus:outline-none focus:ring-2 focus:ring-brand-wood/10 focus:border-brand-wood transition-all bg-brand-paper/50"
                 />
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-brand-clay uppercase tracking-widest">E-mail</label>
-                <input 
-                  type="email" 
+                <input
+                  type="email"
                   required
                   value={formData.email}
-                  onChange={e => setFormData({ ...formData, email: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   placeholder="Seu melhor e-mail para acesso"
                   className="w-full px-4 py-2.5 rounded-full border border-brand-wood/20 text-sm focus:outline-none focus:ring-2 focus:ring-brand-wood/10 focus:border-brand-wood transition-all bg-brand-paper/50"
                 />
               </div>
             </div>
 
-            {/* Selector of payment option */}
+            {/* Selection of Payment Option */}
             <div className="space-y-2">
-              <span className="text-[10px] font-bold text-brand-clay uppercase tracking-widest block">Método de Pagamento</span>
+              <span className="text-[10px] font-bold text-brand-clay uppercase tracking-widest block">
+                Método de Pagamento Preferencial
+              </span>
               <div className="grid grid-cols-3 gap-3">
                 <button
                   type="button"
-                  onClick={() => setPaymentMethod('credit_card')}
+                  onClick={() => setPaymentMethod("pix")}
                   className={`py-3.5 px-3 rounded-2xl border flex flex-col items-center justify-center gap-2 transition-all ${
-                    paymentMethod === 'credit_card'
-                      ? 'border-brand-wood bg-brand-paper text-brand-wood font-bold'
-                      : 'border-brand-wood/10 text-brand-clay hover:bg-brand-paper'
+                    paymentMethod === "pix"
+                      ? "border-brand-wood bg-brand-paper text-brand-wood font-bold"
+                      : "border-brand-wood/10 text-brand-clay hover:bg-brand-paper"
+                  }`}
+                >
+                  <QrCode className="w-5 h-5" />
+                  <span className="text-xs">Pix</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod("credit_card")}
+                  className={`py-3.5 px-3 rounded-2xl border flex flex-col items-center justify-center gap-2 transition-all ${
+                    paymentMethod === "credit_card"
+                      ? "border-brand-wood bg-brand-paper text-brand-wood font-bold"
+                      : "border-brand-wood/10 text-brand-clay hover:bg-brand-paper"
                   }`}
                 >
                   <CreditCard className="w-5 h-5" />
@@ -235,23 +202,11 @@ export default function Checkout({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPaymentMethod('pix')}
+                  onClick={() => setPaymentMethod("boleto")}
                   className={`py-3.5 px-3 rounded-2xl border flex flex-col items-center justify-center gap-2 transition-all ${
-                    paymentMethod === 'pix'
-                      ? 'border-brand-wood bg-brand-paper text-brand-wood font-bold'
-                      : 'border-brand-wood/10 text-brand-clay hover:bg-brand-paper'
-                  }`}
-                >
-                  <QrCode className="w-5 h-5" />
-                  <span className="text-xs">Pix Copia/Cola</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod('boleto')}
-                  className={`py-3.5 px-3 rounded-2xl border flex flex-col items-center justify-center gap-2 transition-all ${
-                    paymentMethod === 'boleto'
-                      ? 'border-brand-wood bg-brand-paper text-brand-wood font-bold'
-                      : 'border-brand-wood/10 text-brand-clay hover:bg-brand-paper'
+                    paymentMethod === "boleto"
+                      ? "border-brand-wood bg-brand-paper text-brand-wood font-bold"
+                      : "border-brand-wood/10 text-brand-clay hover:bg-brand-paper"
                   }`}
                 >
                   <Barcode className="w-5 h-5" />
@@ -260,71 +215,60 @@ export default function Checkout({
               </div>
             </div>
 
-            {/* Conditional fields based on Payment Option selected */}
-            {paymentMethod === 'credit_card' && (
-              <div className="space-y-4 p-4 bg-brand-paper rounded-2xl border border-brand-wood/10 transition-all">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-brand-clay uppercase tracking-widest">Número do Cartão</label>
-                  <input 
-                    type="text" 
-                    required
-                    value={formData.cardNumber}
-                    onChange={e => setFormData({ ...formData, cardNumber: e.target.value })}
-                    className="w-full px-4 py-2 text-sm rounded-lg border border-brand-wood/10 focus:outline-none focus:ring-2 focus:ring-brand-wood/10 bg-white"
+            {/* Selection of Gateway Integrator */}
+            <div className="space-y-2.5 pt-1">
+              <span className="text-[10px] font-bold text-brand-clay uppercase tracking-widest block">
+                Processador de Pagamento Seguro
+              </span>
+              <div className="grid grid-cols-2 gap-4">
+                <label
+                  className={`p-4 rounded-2xl border flex items-center gap-3 cursor-pointer transition-all ${
+                    gatewayProvider === "mercadopago"
+                      ? "border-brand-wood bg-brand-paper/50 text-brand-wood font-bold"
+                      : "border-brand-wood/10 text-brand-clay hover:bg-brand-paper/35"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="gateway"
+                    value="mercadopago"
+                    checked={gatewayProvider === "mercadopago"}
+                    onChange={() => setGatewayProvider("mercadopago")}
+                    className="accent-brand-wood"
                   />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-brand-clay uppercase tracking-widest">Nome Impresso</label>
-                  <input 
-                    type="text" 
-                    required
-                    value={formData.cardName}
-                    onChange={e => setFormData({ ...formData, cardName: e.target.value })}
-                    className="w-full px-4 py-2 text-sm rounded-lg border border-brand-wood/10 focus:outline-none bg-white"
+                  <div className="text-left">
+                    <span className="text-xs block font-bold">Mercado Pago</span>
+                    <span className="text-[9px] text-brand-clay block leading-none">Pix, Boleto e Cartão local</span>
+                  </div>
+                </label>
+
+                <label
+                  className={`p-4 rounded-2xl border flex items-center gap-3 cursor-pointer transition-all ${
+                    gatewayProvider === "stripe"
+                      ? "border-brand-wood bg-brand-paper/50 text-brand-wood font-bold"
+                      : "border-brand-wood/10 text-brand-clay hover:bg-brand-paper/35"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="gateway"
+                    value="stripe"
+                    checked={gatewayProvider === "stripe"}
+                    onChange={() => setGatewayProvider("stripe")}
+                    className="accent-brand-wood"
                   />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-brand-clay uppercase tracking-widest">Validade</label>
-                    <input 
-                      type="text" 
-                      required
-                      value={formData.cardExpiry}
-                      onChange={e => setFormData({ ...formData, cardExpiry: e.target.value })}
-                      className="w-full px-4 py-2 text-sm rounded-lg border border-brand-wood/10 bg-white"
-                    />
+                  <div className="text-left">
+                    <span className="text-xs block font-bold">Stripe Payments</span>
+                    <span className="text-[9px] text-brand-clay block leading-none">Cartões internacionais em 1-clique</span>
                   </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-brand-clay uppercase tracking-widest">CVV</label>
-                    <input 
-                      type="text" 
-                      required
-                      value={formData.cardCvv}
-                      onChange={e => setFormData({ ...formData, cardCvv: e.target.value })}
-                      className="w-full px-4 py-2 text-sm rounded-lg border border-brand-wood/10 bg-white"
-                    />
-                  </div>
-                </div>
+                </label>
               </div>
-            )}
+            </div>
 
-            {paymentMethod === 'pix' && (
-              <div className="p-5 bg-brand-paper rounded-2xl border border-brand-wood/10 text-center space-y-2">
-                <QrCode className="w-8 h-8 text-brand-wood mx-auto animate-pulse" />
-                <h4 className="text-xs font-bold text-[#1A1A1A] uppercase tracking-wider">Aprovação Instantânea</h4>
-                <p className="text-brand-clay text-xs leading-relaxed max-w-sm mx-auto font-light">
-                  Ao concluir, exibiremos a chave Pix Copia e Cola. O sistema simulará o recebimento e liberará seu acesso em instantes.
-                </p>
-              </div>
-            )}
-
-            {paymentMethod === 'boleto' && (
-              <div className="p-5 bg-brand-paper rounded-2xl border border-brand-wood/10 text-center space-y-2">
-                <Barcode className="w-8 h-8 text-[#8B5E3C] mx-auto" />
-                <h4 className="text-xs font-bold text-[#1A1A1A] uppercase tracking-wider">Simulação de Boleto</h4>
-                <p className="text-brand-clay text-xs leading-relaxed max-w-sm mx-auto font-light">
-                  Em nosso simulador, você poderá aprovar esse pagamento instantaneamente na aba de Produtor (Andrew).
-                </p>
+            {/* Error Message */}
+            {checkoutError && (
+              <div className="p-4 bg-red-50 border border-red-200 text-red-900 text-xs rounded-2xl font-medium">
+                {checkoutError}
               </div>
             )}
 
@@ -335,10 +279,10 @@ export default function Checkout({
             >
               {isProcessing ? (
                 <>
-                  <Loader2 className="w-5 h-5 animate-spin" /> Processando Pagamento...
+                  <Loader2 className="w-5 h-5 animate-spin" /> Conectando ao Gateway Seguro...
                 </>
               ) : (
-                `Finalizar Matrícula - R$ ${finalPrice},00`
+                `Finalizar Pedido - R$ ${finalPrice},00`
               )}
             </button>
           </form>
@@ -347,50 +291,53 @@ export default function Checkout({
         {/* Right Side: Cart Summary & Coupon Section */}
         <div className="lg:col-span-5 space-y-6">
           <div className="bg-white p-6 rounded-3xl border border-brand-wood/10 shadow-sm space-y-5">
-            <h3 className="text-lg font-serif font-bold text-[#1A1A1A]">Resumo do Pedido</h3>
-            
-            {/* Product description card */}
-            <div className="flex gap-4">
-              <div className="w-20 h-20 bg-brand-paper rounded-2xl overflow-hidden flex-shrink-0 border border-brand-wood/10">
-                <img 
-                  src={getDirectDriveUrl(product.coverUrl)} 
-                  alt={product.title} 
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
-                />
-              </div>
-              <div className="space-y-1">
-                <span className="text-[9px] bg-brand-clay/10 text-brand-wood font-sans font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
-                  {productType === 'course' ? 'Curso da Academia' : 'Apostila Técnica'}
-                </span>
-                <h4 className="text-sm font-serif font-semibold text-[#1A1A1A] line-clamp-2 leading-tight">
-                  {product.title}
-                </h4>
-                <p className="text-xs text-brand-clay">Acesso Permanente</p>
-              </div>
+            <h3 className="text-lg font-serif font-bold text-[#1A1A1A]">Resumo da Compra</h3>
+
+            {/* Products loop */}
+            <div className="space-y-4 max-h-[240px] overflow-y-auto pr-1">
+              {itemsToBuy.map((item) => (
+                <div key={item.product.id} className="flex gap-4 border-b border-brand-wood/5 pb-3 last:border-0 last:pb-0">
+                  <div className="w-16 h-20 bg-brand-paper rounded-2xl overflow-hidden flex-shrink-0 border border-brand-wood/10">
+                    <img
+                      src={getDirectDriveUrl(item.product.coverUrl)}
+                      alt={item.product.title}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div className="space-y-1 min-w-0 flex-1">
+                    <span className="text-[8px] bg-brand-clay/10 text-brand-wood font-sans font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                      {item.type === "course" ? "Curso da Academia" : "Apostila Técnica"}
+                    </span>
+                    <h4 className="text-xs font-serif font-semibold text-[#1A1A1A] line-clamp-2 leading-tight">
+                      {item.product.title}
+                    </h4>
+                    <span className="font-mono text-xs text-brand-clay">R$ {item.product.price},00</span>
+                  </div>
+                </div>
+              ))}
             </div>
 
             {/* Coupons Form */}
             <div className="pt-4 border-t border-brand-wood/10 space-y-3">
-              <label className="text-[10px] font-sans font-bold text-[#8B5E3C] uppercase tracking-widest block">Cupom de Desconto</label>
+              <label className="text-[10px] font-sans font-bold text-[#8B5E3C] uppercase tracking-widest block">
+                Cupom de Desconto
+              </label>
               {appliedCoupon ? (
                 <div className="bg-brand-paper text-brand-wood border border-brand-wood/20 rounded-2xl px-4 py-2.5 flex justify-between items-center text-xs">
                   <span className="font-semibold flex items-center gap-1.5 uppercase tracking-wide">
                     <Ticket className="w-4 h-4 text-brand-clay" /> {appliedCoupon.code} (-{appliedCoupon.discountPercent}%)
                   </span>
-                  <button 
-                    onClick={handleRemoveCoupon} 
-                    className="text-brand-clay hover:text-brand-wood font-bold"
-                  >
+                  <button onClick={handleRemoveCoupon} className="text-brand-clay hover:text-brand-wood font-bold">
                     Remover
                   </button>
                 </div>
               ) : (
                 <div className="flex gap-2">
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     value={couponCode}
-                    onChange={e => setCouponCode(e.target.value)}
+                    onChange={(e) => setCouponCode(e.target.value)}
                     placeholder="Ex: BLACKFRIDAY50"
                     className="flex-1 px-4 py-2.5 rounded-full border border-brand-wood/20 text-xs focus:outline-none focus:ring-1 focus:ring-brand-wood/30 bg-brand-paper/30"
                   />
@@ -407,14 +354,18 @@ export default function Checkout({
               {!appliedCoupon && (
                 <div className="flex gap-2 flex-wrap pt-1 text-[10px] text-brand-clay/70">
                   <span>Dicas:</span>
-                  <button 
-                    onClick={() => { setCouponCode('BLACKFRIDAY50'); }}
+                  <button
+                    onClick={() => {
+                      setCouponCode("BLACKFRIDAY50");
+                    }}
                     className="hover:text-brand-wood font-medium hover:underline bg-brand-paper px-2 py-0.5 rounded-full border border-brand-wood/10"
                   >
                     BLACKFRIDAY50 (50%)
                   </button>
-                  <button 
-                    onClick={() => { setCouponCode('PROMO20'); }}
+                  <button
+                    onClick={() => {
+                      setCouponCode("PROMO20");
+                    }}
                     className="hover:text-brand-wood font-medium hover:underline bg-brand-paper px-2 py-0.5 rounded-full border border-brand-wood/10"
                   >
                     PROMO20 (20%)
@@ -427,7 +378,7 @@ export default function Checkout({
             <div className="pt-4 border-t border-brand-wood/10 space-y-2 text-sm text-brand-clay">
               <div className="flex justify-between items-center">
                 <span>Subtotal</span>
-                <span>R$ {basePrice},00</span>
+                <span>R$ {subtotal},00</span>
               </div>
               {appliedCoupon && (
                 <div className="flex justify-between items-center text-brand-wood font-medium">
@@ -444,7 +395,7 @@ export default function Checkout({
 
           <div className="bg-gradient-to-br from-[#4A3222] to-[#2F1F15] text-[#DFD3C3] p-5 rounded-3xl border border-brand-wood/10 shadow-md space-y-3.5">
             <span className="inline-flex items-center gap-1 bg-brand-clay/20 text-[#DFD3C3] border border-brand-clay/30 px-2.5 py-0.5 rounded-full text-[9px] font-sans font-bold uppercase tracking-widest">
-              <Sparkles className="w-3 h-3 text-brand-clay" /> Ambiente Seguro & Protegido
+              <Sparkles className="w-3 h-3 text-brand-clay" /> Certificação Ateliê de Artes
             </span>
             <p className="text-[#DFD3C3]/80 text-xs leading-relaxed font-sans font-light">
               Nossa academia garante visualização exclusiva de cursos e infoprodutos protegidos de artes plásticas. Seus materiais e apostilas são protegidos e associados diretamente à sua conta.

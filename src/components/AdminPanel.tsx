@@ -3,12 +3,17 @@ import { Course, Module, Lesson, Apostila, Sale, Coupon, User, SupportTicket } f
 import { 
   LayoutDashboard, BookOpen, FileText, Users, ShoppingCart, Ticket, 
   HelpCircle, Sparkles, Plus, Trash2, Edit3, DollarSign, Award, CheckCircle2, 
-  ArrowUpRight, AlertCircle, RefreshCw, Star, Loader2, Send, Eye, X, ChevronRight, ShieldAlert
+  ArrowUpRight, AlertCircle, RefreshCw, Star, Loader2, Send, Eye, X, ChevronRight, ShieldAlert,
+  MessageSquare, Shield, Lock, Unlock, Clock, UserCheck, UserX
 } from 'lucide-react';
 import { getDirectDriveUrl } from '../utils/image';
 import { cleanCitations } from '../utils/text';
+import { FileUploader } from './FileUploader';
+import { apiFetch } from '../utils/firebase';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+
+const fetch = apiFetch;
 
 
 interface AdminPanelProps {
@@ -20,6 +25,9 @@ interface AdminPanelProps {
   coupons: Coupon[];
   users: User[];
   supportTickets: SupportTicket[];
+  comments?: any[];
+  certificates?: any[];
+  currentUser?: User;
   onAddCourse: (course: Course) => void;
   onDeleteCourse: (id: string) => void;
   onAddModule: (mod: Module) => void;
@@ -32,6 +40,15 @@ interface AdminPanelProps {
   onAddCoupon: (coupon: Coupon) => void;
   onDeleteCoupon: (id: string) => void;
   onAnswerTicket: (id: string, answerText: string) => void;
+  onUpdateUser: (id: string, userPayload: any) => void;
+  onDeleteUser: (id: string) => void;
+  onUpdateSale: (id: string, salePayload: any) => void;
+  onCreateSale: (salePayload: any) => void;
+  onDeleteSale: (id: string) => void;
+  onDeleteComment: (id: string) => void;
+  onDeleteCertificate: (id: string) => void;
+  onIssueCertificate: (certPayload: any) => void;
+  onAddComment: (commentPayload: any) => void;
 }
 
 export default function AdminPanel({
@@ -43,6 +60,9 @@ export default function AdminPanel({
   coupons,
   users,
   supportTickets,
+  comments = [],
+  certificates = [],
+  currentUser,
   onAddCourse,
   onDeleteCourse,
   onAddModule,
@@ -54,9 +74,18 @@ export default function AdminPanel({
   onApproveSale,
   onAddCoupon,
   onDeleteCoupon,
-  onAnswerTicket
+  onAnswerTicket,
+  onUpdateUser,
+  onDeleteUser,
+  onUpdateSale,
+  onCreateSale,
+  onDeleteSale,
+  onDeleteComment,
+  onDeleteCertificate,
+  onIssueCertificate,
+  onAddComment
 }: AdminPanelProps) {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'courses' | 'ebooks' | 'sales' | 'coupons' | 'tickets'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'courses' | 'ebooks' | 'sales' | 'coupons' | 'tickets' | 'users' | 'comments' | 'certificates'>('dashboard');
 
   // Creation/Edit states
   const [editingCourse, setEditingCourse] = useState<Partial<Course> | null>(null);
@@ -64,6 +93,11 @@ export default function AdminPanel({
   const [editingLesson, setEditingLesson] = useState<Partial<Lesson> | null>(null);
   const [editingApostila, setEditingApostila] = useState<Partial<Apostila> | null>(null);
   const [editingCoupon, setEditingCoupon] = useState<Partial<Coupon> | null>(null);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [editingSale, setEditingSale] = useState<Partial<Sale> | null>(null);
+  const [issuingCertificate, setIssuingCertificate] = useState<{ studentId: string; studentName: string; studentEmail: string; courseId: string; courseTitle: string } | null>(null);
+  const [replyingCommentId, setReplyingCommentId] = useState<string | null>(null);
+  const [commentReplyText, setCommentReplyText] = useState('');
 
   // Ebook Preview states
   const [previewingApostila, setPreviewingApostila] = useState<Apostila | null>(null);
@@ -92,7 +126,7 @@ export default function AdminPanel({
   const handleGenerateAiSupportDraft = async (ticket: SupportTicket) => {
     setAiDraftLoading(true);
     try {
-      const res = await fetch('/api/gemini/answer-ticket', {
+      const res = await fetch('/api/v1/gemini/answer-ticket', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -119,7 +153,7 @@ export default function AdminPanel({
     setAiQuizLoading(true);
 
     try {
-      const res = await fetch('/api/gemini/quiz', {
+      const res = await fetch('/api/v1/gemini/quiz', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -207,6 +241,39 @@ export default function AdminPanel({
             }`}
           >
             <Ticket className="w-4 h-4" /> Cupons de Desconto
+          </button>
+
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-full text-[10px] font-sans font-medium uppercase tracking-widest transition-all ${
+              activeTab === 'users'
+                ? 'bg-brand-wood text-[#FDFCFB] shadow-md shadow-brand-wood/25'
+                : 'text-brand-clay hover:bg-brand-paper hover:text-brand-wood'
+            }`}
+          >
+            <Users className="w-4 h-4" /> Usuários & Permissões
+          </button>
+
+          <button
+            onClick={() => setActiveTab('comments')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-full text-[10px] font-sans font-medium uppercase tracking-widest transition-all ${
+              activeTab === 'comments'
+                ? 'bg-brand-wood text-[#FDFCFB] shadow-md shadow-brand-wood/25'
+                : 'text-brand-clay hover:bg-brand-paper hover:text-brand-wood'
+            }`}
+          >
+            <MessageSquare className="w-4 h-4" /> Comentários
+          </button>
+
+          <button
+            onClick={() => setActiveTab('certificates')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-full text-[10px] font-sans font-medium uppercase tracking-widest transition-all ${
+              activeTab === 'certificates'
+                ? 'bg-brand-wood text-[#FDFCFB] shadow-md shadow-brand-wood/25'
+                : 'text-brand-clay hover:bg-brand-paper hover:text-brand-wood'
+            }`}
+          >
+            <Award className="w-4 h-4" /> Certificados
           </button>
 
           <button
@@ -373,12 +440,20 @@ export default function AdminPanel({
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">URL da Capa</label>
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Imagem de Capa do Curso</label>
+                    <FileUploader
+                      allowedTypes="image"
+                      maxSizeMB={5}
+                      currentUrl={editingCourse.coverUrl || ''}
+                      onUploadSuccess={(url) => setEditingCourse({ ...editingCourse, coverUrl: url })}
+                      onDeleteSuccess={() => setEditingCourse({ ...editingCourse, coverUrl: '' })}
+                    />
                     <input 
                       type="text" 
                       value={editingCourse.coverUrl || ''}
                       onChange={e => setEditingCourse({ ...editingCourse, coverUrl: e.target.value })}
-                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
+                      placeholder="Ou cole uma URL externa da capa..."
+                      className="w-full p-2 bg-brand-paper border border-brand-wood/15 rounded-lg text-xs text-brand-ink mt-1"
                     />
                   </div>
                   <div className="md:col-span-2 space-y-1">
@@ -633,13 +708,20 @@ export default function AdminPanel({
                                             />
                                           </div>
                                           <div className="space-y-1">
-                                            <label className="font-bold text-brand-clay">URL do Vídeo (mp4)</label>
+                                            <label className="font-bold text-brand-clay">Vídeo da Aula (MP4 / WEBM)</label>
+                                            <FileUploader
+                                              allowedTypes="video"
+                                              maxSizeMB={100}
+                                              currentUrl={editingLesson.videoUrl || ''}
+                                              onUploadSuccess={(url) => setEditingLesson({ ...editingLesson, videoUrl: url })}
+                                              onDeleteSuccess={() => setEditingLesson({ ...editingLesson, videoUrl: '' })}
+                                            />
                                             <input 
                                               type="text" 
                                               value={editingLesson.videoUrl || ''}
                                               onChange={e => setEditingLesson({ ...editingLesson, videoUrl: e.target.value })}
-                                              placeholder="Ex: https://www.w3schools.com/html/movie.mp4"
-                                              className="w-full p-2 bg-brand-paper border border-brand-wood/15 rounded-lg text-xs text-brand-ink"
+                                              placeholder="Ou cole uma URL externa do vídeo..."
+                                              className="w-full p-2 bg-brand-paper border border-brand-wood/15 rounded-lg text-xs text-brand-ink mt-1"
                                             />
                                           </div>
                                           <div className="space-y-1">
@@ -705,6 +787,54 @@ export default function AdminPanel({
                                                 </div>
                                               </div>
                                             )}
+                                          </div>
+
+                                          {/* PDF Materials / Apostilas Section */}
+                                          <div className="col-span-2 border-t border-brand-wood/10 pt-3 space-y-2">
+                                            <label className="font-bold text-brand-clay text-xs block">Materiais de Apoio / Apostilas PDF</label>
+                                            
+                                            {editingLesson.materials && editingLesson.materials.length > 0 && (
+                                              <div className="space-y-1.5 mb-2">
+                                                {editingLesson.materials.map((mat) => (
+                                                  <div key={mat.id} className="bg-brand-paper p-2 rounded-xl border border-brand-wood/5 flex justify-between items-center text-xs">
+                                                    <div className="flex items-center gap-1.5 truncate">
+                                                      <FileText className="w-3.5 h-3.5 text-brand-wood" />
+                                                      <span className="font-semibold text-brand-ink truncate text-[11px]">{mat.name}</span>
+                                                      <span className="text-brand-clay text-[9px]">({mat.size})</span>
+                                                    </div>
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => {
+                                                        const updatedMaterials = (editingLesson.materials || []).filter(m => m.id !== mat.id);
+                                                        setEditingLesson({ ...editingLesson, materials: updatedMaterials });
+                                                      }}
+                                                      className="text-red-500 hover:text-red-700 p-1"
+                                                    >
+                                                      <Trash2 className="w-3.5 h-3.5" />
+                                                    </button>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+
+                                            <FileUploader
+                                              allowedTypes="pdf"
+                                              maxSizeMB={15}
+                                              label="Enviar Novo Arquivo de Apoio (PDF)"
+                                              onUploadSuccess={(url, name, size) => {
+                                                const newMaterial = {
+                                                  id: `mat-${Date.now()}`,
+                                                  name,
+                                                  url,
+                                                  size
+                                                };
+                                                const currentMaterials = editingLesson.materials || [];
+                                                setEditingLesson({
+                                                  ...editingLesson,
+                                                  materials: [...currentMaterials, newMaterial]
+                                                });
+                                              }}
+                                            />
                                           </div>
                                         </div>
 
@@ -824,12 +954,20 @@ export default function AdminPanel({
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">URL da Capa</label>
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Imagem de Capa da Apostila</label>
+                    <FileUploader
+                      allowedTypes="image"
+                      maxSizeMB={5}
+                      currentUrl={editingApostila.coverUrl || ''}
+                      onUploadSuccess={(url) => setEditingApostila({ ...editingApostila, coverUrl: url })}
+                      onDeleteSuccess={() => setEditingApostila({ ...editingApostila, coverUrl: '' })}
+                    />
                     <input 
                       type="text" 
                       value={editingApostila.coverUrl || ''}
                       onChange={e => setEditingApostila({ ...editingApostila, coverUrl: e.target.value })}
-                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
+                      placeholder="Ou cole uma URL externa da capa..."
+                      className="w-full p-2 bg-brand-paper border border-brand-wood/15 rounded-lg text-xs text-brand-ink mt-1"
                     />
                   </div>
                   <div className="col-span-2 space-y-1">
@@ -1002,61 +1140,263 @@ export default function AdminPanel({
 
         {/* TAB 4: SALES AND SIMULATED PAYMENTS */}
         {activeTab === 'sales' && (
-          <div className="bg-white rounded-3xl border border-brand-wood/10 shadow-sm overflow-hidden" id="sales-tab">
-            <div className="p-5 border-b border-brand-wood/5 bg-brand-paper/50 flex justify-between items-center">
+          <div className="space-y-6" id="sales-tab">
+            <div className="flex justify-between items-center">
               <div>
-                <h3 className="font-serif font-bold text-brand-ink text-base">Inscrições & Matrículas Efetuadas</h3>
-                <p className="text-xs text-brand-clay mt-0.5">Veja históricos de pagamentos simulados e libere acessos pendentes.</p>
+                <h2 className="text-xl font-serif font-bold text-brand-ink">Matrículas & Inscrições</h2>
+                <p className="text-xs text-brand-clay font-sans">Gerencie vendas da plataforma ou adicione matrículas manuais diretamente para alunos.</p>
               </div>
+              <button
+                onClick={() => setEditingSale({ id: '', studentName: '', studentEmail: '', productId: '', productTitle: '', productType: 'course', pricePaid: 0, paymentMethod: 'manual', paymentStatus: 'approved' })}
+                className="inline-flex items-center gap-1.5 bg-brand-wood hover:bg-brand-clay text-white text-[10px] font-sans font-medium uppercase tracking-widest px-5 py-2.5 rounded-full shadow-md transition-all"
+              >
+                <Plus className="w-4 h-4" /> Matrícula Manual
+              </button>
             </div>
 
-            <div className="overflow-x-auto text-xs font-sans">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-brand-paper text-brand-clay font-bold uppercase tracking-wider text-[10px] border-b border-brand-wood/5">
-                    <th className="p-4">Aluno / Pedido</th>
-                    <th className="p-4">Item Adquirido</th>
-                    <th className="p-4">Forma / Valor</th>
-                    <th className="p-4">Status</th>
-                    <th className="p-4 text-right">Ação</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-brand-wood/5">
-                  {sales.map(sale => (
-                    <tr key={sale.id} className="hover:bg-brand-paper/30">
-                      <td className="p-4">
-                        <span className="font-bold text-brand-ink block">{sale.studentName}</span>
-                        <span className="text-brand-clay text-[10px] block font-mono">{sale.studentEmail}</span>
-                        <span className="text-[9px] text-brand-clay block">{new Date(sale.createdAt).toLocaleDateString()}</span>
-                      </td>
-                      <td className="p-4 font-serif font-semibold text-brand-ink">{sale.productTitle}</td>
-                      <td className="p-4">
-                        <span className="font-mono text-brand-clay block uppercase">{sale.paymentMethod}</span>
-                        <span className="font-semibold text-brand-wood block">R$ {sale.pricePaid},00</span>
-                      </td>
-                      <td className="p-4">
-                        <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
-                          sale.paymentStatus === 'approved' 
-                            ? 'bg-brand-wood/10 text-brand-wood' 
-                            : 'bg-brand-clay/10 text-brand-clay'
-                        }`}>
-                          {sale.paymentStatus === 'approved' ? 'Aprovado' : 'Aguardando'}
-                        </span>
-                      </td>
-                      <td className="p-4 text-right">
-                        {sale.paymentStatus === 'pending' && (
-                          <button
-                            onClick={() => onApproveSale(sale.id)}
-                            className="bg-brand-wood hover:bg-brand-clay text-white font-bold text-[9px] uppercase tracking-widest px-3 py-1.5 rounded-full"
-                          >
-                            Aprovar
-                          </button>
-                        )}
-                      </td>
+            {/* Sale Edit/Create form */}
+            {editingSale && (
+              <div className="bg-brand-paper p-6 rounded-3xl border border-brand-wood/10 space-y-4">
+                <h3 className="font-serif font-bold text-brand-ink text-xs">{editingSale.id ? 'Editar Registro de Matrícula' : 'Nova Matrícula Manual'}</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-sans">
+                  
+                  {/* Select Student or enter email */}
+                  <div className="space-y-1">
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Selecionar Usuário / Aluno</label>
+                    <select
+                      value={editingSale.studentEmail || ''}
+                      onChange={e => {
+                        const sel = users.find(u => u.email === e.target.value);
+                        if (sel) {
+                          setEditingSale({
+                            ...editingSale,
+                            studentId: sel.id,
+                            studentName: sel.name,
+                            studentEmail: sel.email
+                          });
+                        } else {
+                          setEditingSale({
+                            ...editingSale,
+                            studentEmail: e.target.value
+                          });
+                        }
+                      }}
+                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
+                    >
+                      <option value="">-- Escolha um Aluno Existente --</option>
+                      {users.map(u => (
+                        <option key={u.id} value={u.email}>{u.name} ({u.email})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Manual details if no student selected */}
+                  <div className="space-y-1">
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Nome do Aluno (Ficha Manual)</label>
+                    <input 
+                      type="text" 
+                      placeholder="Nome completo do aluno"
+                      value={editingSale.studentName || ''}
+                      onChange={e => setEditingSale({ ...editingSale, studentName: e.target.value })}
+                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">E-mail do Aluno (Ficha Manual)</label>
+                    <input 
+                      type="email" 
+                      placeholder="aluno@email.com"
+                      value={editingSale.studentEmail || ''}
+                      onChange={e => setEditingSale({ ...editingSale, studentEmail: e.target.value })}
+                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
+                    />
+                  </div>
+
+                  {/* Product Choice */}
+                  <div className="space-y-1">
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Produto para Liberar</label>
+                    <select
+                      value={editingSale.productId || ''}
+                      onChange={e => {
+                        const val = e.target.value;
+                        const split = val.split(':');
+                        const pId = split[1] || '';
+                        const pType = split[0] || '';
+                        let pTitle = '';
+                        let pPrice = 0;
+
+                        if (pType === 'course') {
+                          const target = courses.find(c => c.id === pId);
+                          pTitle = target?.title || '';
+                          pPrice = target?.price || 0;
+                        } else if (pType === 'ebook') {
+                          const target = apostilas.find(a => a.id === pId);
+                          pTitle = target?.title || '';
+                          pPrice = target?.price || 0;
+                        }
+
+                        setEditingSale({
+                          ...editingSale,
+                          productId: pId,
+                          productType: (pType === 'ebook' ? 'apostila' : 'course') as any,
+                          productTitle: pTitle,
+                          pricePaid: pPrice
+                        });
+                      }}
+                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
+                    >
+                      <option value="">-- Escolha um Curso ou Apostila --</option>
+                      <optgroup label="Cursos Livres">
+                        {courses.map(c => (
+                          <option key={c.id} value={`course:${c.id}`}>{c.title} (R$ {c.price})</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Apostilas / Ebooks">
+                        {apostilas.map(a => (
+                          <option key={a.id} value={`ebook:${a.id}`}>{a.title} (R$ {a.price})</option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Valor Pago (R$)</label>
+                    <input 
+                      type="number" 
+                      value={editingSale.pricePaid || 0}
+                      onChange={e => setEditingSale({ ...editingSale, pricePaid: Number(e.target.value) })}
+                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Forma de Pagamento</label>
+                    <select
+                      value={editingSale.paymentMethod || 'manual'}
+                      onChange={e => setEditingSale({ ...editingSale, paymentMethod: e.target.value as any })}
+                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
+                    >
+                      <option value="manual">Matrícula Gratuita / Cortesia</option>
+                      <option value="pix">PIX</option>
+                      <option value="credit_card">Cartão de Crédito</option>
+                      <option value="boleto">Boleto Bancário</option>
+                      <option value="mercadopago">Mercado Pago</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Status do Pagamento</label>
+                    <select
+                      value={editingSale.paymentStatus || 'approved'}
+                      onChange={e => setEditingSale({ ...editingSale, paymentStatus: e.target.value as 'approved' | 'pending' | 'failed' })}
+                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
+                    >
+                      <option value="approved">Aprovado (Acesso Liberado)</option>
+                      <option value="pending">Aguardando Pagamento</option>
+                      <option value="failed">Cancelado / Recusado</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 text-[10px] uppercase font-sans tracking-widest font-medium pt-3">
+                  <button onClick={() => setEditingSale(null)} className="px-4 py-2 bg-white border border-brand-wood/10 rounded-full">Cancelar</button>
+                  <button
+                    onClick={() => { 
+                      if (!editingSale.studentEmail || !editingSale.productTitle) {
+                        alert('Por favor, preencha o email do aluno e o produto!');
+                        return;
+                      }
+                      if (editingSale.id) {
+                        onUpdateSale(editingSale.id, editingSale);
+                      } else {
+                        onCreateSale({
+                          ...editingSale,
+                          id: 'manual_' + Date.now(),
+                          createdAt: new Date().toISOString()
+                        });
+                      }
+                      setEditingSale(null); 
+                    }}
+                    className="px-4 py-2 bg-brand-wood text-white rounded-full"
+                  >
+                    Salvar Inscrição
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="bg-white rounded-3xl border border-brand-wood/10 shadow-sm overflow-hidden">
+              <div className="overflow-x-auto text-xs font-sans">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-brand-paper text-brand-clay font-bold uppercase tracking-wider text-[10px] border-b border-brand-wood/5">
+                      <th className="p-4">Aluno / Pedido</th>
+                      <th className="p-4">Item Adquirido</th>
+                      <th className="p-4">Forma / Valor</th>
+                      <th className="p-4">Status</th>
+                      <th className="p-4 text-right">Ações</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-brand-wood/5">
+                    {sales.map(sale => (
+                      <tr key={sale.id} className="hover:bg-brand-paper/30">
+                        <td className="p-4">
+                          <span className="font-bold text-brand-ink block">{sale.studentName}</span>
+                          <span className="text-brand-clay text-[10px] block font-mono">{sale.studentEmail}</span>
+                          <span className="text-[9px] text-brand-clay block">{new Date(sale.createdAt).toLocaleDateString()}</span>
+                        </td>
+                        <td className="p-4">
+                          <span className="font-serif font-semibold text-brand-ink block">{sale.productTitle}</span>
+                          <span className="text-[9px] uppercase tracking-wider font-extrabold text-brand-clay">{sale.productType === 'apostila' ? '📖 Apostila' : '🎓 Curso'}</span>
+                        </td>
+                        <td className="p-4">
+                          <span className="font-mono text-brand-clay block uppercase text-[10px]">{sale.paymentMethod}</span>
+                          <span className="font-semibold text-brand-wood block text-sm">R$ {sale.pricePaid},00</span>
+                        </td>
+                        <td className="p-4">
+                          <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
+                            sale.paymentStatus === 'approved' 
+                              ? 'bg-brand-wood/10 text-brand-wood' 
+                              : sale.paymentStatus === 'failed'
+                              ? 'bg-red-50 text-red-600 border border-red-100'
+                              : 'bg-brand-clay/10 text-brand-clay'
+                          }`}>
+                            {sale.paymentStatus === 'approved' ? 'Aprovado' : sale.paymentStatus === 'failed' ? 'Recusado' : 'Pendente'}
+                          </span>
+                        </td>
+                        <td className="p-4 text-right space-x-2">
+                          {sale.paymentStatus === 'pending' && (
+                            <button
+                              onClick={() => onApproveSale(sale.id)}
+                              className="bg-brand-wood hover:bg-brand-clay text-white font-bold text-[9px] uppercase tracking-widest px-3 py-1.5 rounded-full"
+                            >
+                              Aprovar
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setEditingSale(sale)}
+                            className="text-brand-wood hover:text-brand-clay font-bold"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            onClick={() => onDeleteSale(sale.id)}
+                            className="text-red-500 hover:text-red-700 font-bold"
+                          >
+                            Deletar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {sales.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="text-center p-8 text-brand-clay italic">Nenhuma matrícula registrada.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
@@ -1067,7 +1407,7 @@ export default function AdminPanel({
             <div className="flex justify-between items-center">
               <h2 className="text-xl font-serif font-bold text-brand-ink">Cupons de Desconto</h2>
               <button
-                onClick={() => setEditingCoupon({ id: '', code: '', discountPercent: 10, active: true })}
+                onClick={() => setEditingCoupon({ id: '', code: '', discountPercent: 10, active: true, expiresAt: new Date(Date.now() + 30*24*60*60*1000).toISOString().split('T')[0] })}
                 className="inline-flex items-center gap-1.5 bg-brand-wood hover:bg-brand-clay text-white text-[10px] font-sans font-medium uppercase tracking-widest px-5 py-2.5 rounded-full shadow-md transition-all"
               >
                 <Plus className="w-4 h-4" /> Novo Cupom
@@ -1077,8 +1417,8 @@ export default function AdminPanel({
             {/* Coupon Edit form */}
             {editingCoupon && (
               <div className="bg-brand-paper p-6 rounded-3xl border border-brand-wood/10 space-y-4">
-                <h3 className="font-serif font-bold text-brand-ink text-xs">Novo Cupom de Desconto</h3>
-                <div className="grid grid-cols-2 gap-3 text-xs font-sans">
+                <h3 className="font-serif font-bold text-brand-ink text-xs">{editingCoupon.id ? 'Editar Cupom de Desconto' : 'Novo Cupom de Desconto'}</h3>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs font-sans">
                   <div className="space-y-1">
                     <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Código do Cupom</label>
                     <input 
@@ -1097,6 +1437,26 @@ export default function AdminPanel({
                       onChange={e => setEditingCoupon({ ...editingCoupon, discountPercent: Number(e.target.value) })}
                       className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
                     />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Data de Expiração</label>
+                    <input 
+                      type="date" 
+                      value={editingCoupon.expiresAt ? editingCoupon.expiresAt.split('T')[0] : ''}
+                      onChange={e => setEditingCoupon({ ...editingCoupon, expiresAt: new Date(e.target.value).toISOString() })}
+                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Status</label>
+                    <select 
+                      value={editingCoupon.active ? 'true' : 'false'}
+                      onChange={e => setEditingCoupon({ ...editingCoupon, active: e.target.value === 'true' })}
+                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
+                    >
+                      <option value="true">Ativo</option>
+                      <option value="false">Inativo</option>
+                    </select>
                   </div>
                 </div>
 
@@ -1119,8 +1479,9 @@ export default function AdminPanel({
                   <tr className="bg-brand-paper text-brand-clay font-bold uppercase tracking-wider text-[10px] border-b border-brand-wood/5">
                     <th className="p-4">Código</th>
                     <th className="p-4">Desconto</th>
+                    <th className="p-4">Validade</th>
                     <th className="p-4">Status</th>
-                    <th className="p-4 text-right">Ação</th>
+                    <th className="p-4 text-right">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-brand-wood/5">
@@ -1128,14 +1489,21 @@ export default function AdminPanel({
                     <tr key={cop.id} className="hover:bg-brand-paper/30">
                       <td className="p-4 font-mono font-bold text-brand-ink">{cop.code}</td>
                       <td className="p-4 font-semibold text-brand-wood">{cop.discountPercent}% OFF</td>
+                      <td className="p-4 text-brand-clay">{cop.expiresAt ? new Date(cop.expiresAt).toLocaleDateString() : 'N/A'}</td>
                       <td className="p-4">
                         <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
-                          cop.active ? 'bg-brand-wood/10 text-brand-wood' : 'bg-red-100 text-red-800'
+                          cop.active ? 'bg-brand-wood/10 text-[#FDFCFB]' : 'bg-red-100 text-red-800'
                         }`}>
                           {cop.active ? 'Ativo' : 'Inativo'}
                         </span>
                       </td>
-                      <td className="p-4 text-right">
+                      <td className="p-4 text-right space-x-2">
+                        <button 
+                          onClick={() => setEditingCoupon(cop)}
+                          className="text-brand-wood hover:text-brand-clay font-bold"
+                        >
+                          Editar
+                        </button>
                         <button 
                           onClick={() => onDeleteCoupon(cop.id)}
                           className="text-red-500 hover:text-red-700 font-bold"
@@ -1277,6 +1645,520 @@ export default function AdminPanel({
               {supportTickets.length === 0 && (
                 <p className="text-brand-clay italic text-center py-6 font-sans">Nenhum ticket de suporte em aberto.</p>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 7: USERS & PERMISSIONS */}
+        {activeTab === 'users' && (
+          <div className="space-y-6" id="users-tab">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-serif font-bold text-brand-ink">Alunos, Administradores & Acessos</h2>
+                <p className="text-xs text-brand-clay font-sans">Gerencie os usuários cadastrados, modifique níveis de permissão ou bloqueie acessos.</p>
+              </div>
+              <button
+                onClick={() => setEditingUser({ id: '', name: '', email: '', role: 'student', status: 'active', avatarUrl: '', purchasedProducts: [] } as any)}
+                className="inline-flex items-center gap-1.5 bg-brand-wood hover:bg-brand-clay text-white text-[10px] font-sans font-medium uppercase tracking-widest px-5 py-2.5 rounded-full shadow-md transition-all"
+              >
+                <Plus className="w-4 h-4" /> Novo Usuário
+              </button>
+            </div>
+
+            {/* Editing/Creation Card */}
+            {editingUser && (
+              <div className="bg-brand-paper p-6 rounded-3xl border border-brand-wood/10 space-y-4">
+                <h3 className="font-serif font-bold text-brand-ink text-xs">{editingUser.id ? 'Editar Informações & Permissões' : 'Criar Novo Perfil'}</h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-sans">
+                  <div className="space-y-1">
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Nome Completo</label>
+                    <input 
+                      type="text" 
+                      value={editingUser.name || ''}
+                      onChange={e => setEditingUser({ ...editingUser, name: e.target.value })}
+                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Endereço de E-mail</label>
+                    <input 
+                      type="email" 
+                      value={editingUser.email || ''}
+                      onChange={e => setEditingUser({ ...editingUser, email: e.target.value })}
+                      disabled={!!editingUser.id}
+                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink disabled:bg-gray-100 disabled:text-gray-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Nível de Acesso (Cargo)</label>
+                    <select
+                      value={editingUser.role || 'student'}
+                      onChange={e => setEditingUser({ ...editingUser, role: e.target.value as 'student' | 'admin' })}
+                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
+                    >
+                      <option value="student">Aluno / Estudante</option>
+                      <option value="admin">Administrador / Mestre</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Estado da Conta</label>
+                    <select
+                      value={(editingUser as any).status || 'active'}
+                      onChange={e => setEditingUser({ ...editingUser, status: e.target.value as any } as any)}
+                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
+                    >
+                      <option value="active">Ativo (Acesso Liberado)</option>
+                      <option value="blocked">Bloqueado (Acesso Suspenso)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Course/Ebook Access checklist */}
+                <div className="border-t border-brand-wood/10 pt-4 space-y-2 font-sans">
+                  <span className="font-bold text-brand-clay uppercase tracking-wider text-[9px] block">Controle Individual de Acesso (Produtos Liberados)</span>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-48 overflow-y-auto p-2 bg-white rounded-2xl border border-brand-wood/10 text-xs">
+                    {/* Courses list */}
+                    <div className="space-y-1.5">
+                      <span className="font-serif font-extrabold text-[10px] text-brand-wood uppercase tracking-wider block border-b border-brand-wood/5 pb-1">Cursos</span>
+                      {courses.map(c => {
+                        const hasAccess = (editingUser.purchasedProducts || []).includes(c.id);
+                        return (
+                          <label key={c.id} className="flex items-center gap-2 py-1 hover:bg-brand-paper/50 rounded px-1.5 cursor-pointer">
+                            <input 
+                              type="checkbox" 
+                              checked={hasAccess}
+                              onChange={e => {
+                                const list = [...(editingUser.purchasedProducts || [])];
+                                if (e.target.checked) {
+                                  list.push(c.id);
+                                } else {
+                                  const idx = list.indexOf(c.id);
+                                  if (idx !== -1) list.splice(idx, 1);
+                                }
+                                setEditingUser({ ...editingUser, purchasedProducts: list });
+                              }}
+                              className="rounded text-brand-wood focus:ring-brand-wood"
+                            />
+                            <span className="truncate text-brand-ink font-medium">{c.title}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+
+                    {/* Apostilas list */}
+                    <div className="space-y-1.5">
+                      <span className="font-serif font-extrabold text-[10px] text-brand-wood uppercase tracking-wider block border-b border-brand-wood/5 pb-1">Apostilas</span>
+                      {apostilas.map(a => {
+                        const hasAccess = (editingUser.purchasedProducts || []).includes(a.id);
+                        return (
+                          <label key={a.id} className="flex items-center gap-2 py-1 hover:bg-brand-paper/50 rounded px-1.5 cursor-pointer">
+                            <input 
+                              type="checkbox" 
+                              checked={hasAccess}
+                              onChange={e => {
+                                const list = [...(editingUser.purchasedProducts || [])];
+                                if (e.target.checked) {
+                                  list.push(a.id);
+                                } else {
+                                  const idx = list.indexOf(a.id);
+                                  if (idx !== -1) list.splice(idx, 1);
+                                }
+                                setEditingUser({ ...editingUser, purchasedProducts: list });
+                              }}
+                              className="rounded text-brand-wood focus:ring-brand-wood"
+                            />
+                            <span className="truncate text-brand-ink font-medium">{a.title}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 text-[10px] uppercase font-sans tracking-widest font-medium pt-3 border-t border-brand-wood/5">
+                  <button onClick={() => setEditingUser(null)} className="px-4 py-2 bg-white border border-brand-wood/10 rounded-full">Cancelar</button>
+                  <button
+                    onClick={() => { 
+                      if (!editingUser.name || !editingUser.email) {
+                        alert('Preencha os campos obrigatórios!');
+                        return;
+                      }
+                      if (editingUser.id) {
+                        onUpdateUser(editingUser.id, editingUser);
+                      } else {
+                        // Create user with a dummy id for manual entries
+                        const dummyId = 'usr_' + Date.now();
+                        onUpdateUser(dummyId, { ...editingUser, id: dummyId });
+                      }
+                      setEditingUser(null);
+                    }}
+                    className="px-4 py-2 bg-brand-wood text-white rounded-full"
+                  >
+                    Salvar Perfil
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Users Table list */}
+            <div className="bg-white rounded-3xl border border-brand-wood/10 shadow-sm overflow-hidden text-xs font-sans">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-brand-paper text-brand-clay font-bold uppercase tracking-wider text-[10px] border-b border-brand-wood/5">
+                      <th className="p-4">Ficha do Usuário</th>
+                      <th className="p-4">Tipo de Conta</th>
+                      <th className="p-4">Produtos Ativos</th>
+                      <th className="p-4">Status</th>
+                      <th className="p-4 text-right">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-brand-wood/5">
+                    {users.map(u => {
+                      const activeProductNames = [
+                        ...courses.filter(c => (u.purchasedProducts || []).includes(c.id)).map(c => '🎓 ' + c.title),
+                        ...apostilas.filter(a => (u.purchasedProducts || []).includes(a.id)).map(a => '📖 ' + a.title)
+                      ];
+
+                      return (
+                        <tr key={u.id} className="hover:bg-brand-paper/30">
+                          <td className="p-4">
+                            <div className="flex items-center gap-3">
+                              {u.avatarUrl ? (
+                                <img src={u.avatarUrl} alt="" className="w-9 h-9 rounded-full object-cover border border-brand-wood/10 flex-shrink-0" />
+                              ) : (
+                                <div className="w-9 h-9 rounded-full bg-brand-clay/10 text-brand-wood font-bold flex items-center justify-center flex-shrink-0 border border-brand-wood/5">
+                                  {u.name.charAt(0).toUpperCase()}
+                                </div>
+                              )}
+                              <div>
+                                <span className="font-bold text-brand-ink block">{u.name}</span>
+                                <span className="text-[10px] font-mono text-brand-clay block">{u.email}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            {u.role === 'admin' ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-brand-wood text-white border border-brand-wood/15">
+                                <Shield className="w-3 h-3" /> Administrador
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-blue-50 text-blue-800 border border-blue-200">
+                                Aluno
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-4 max-w-xs">
+                            {activeProductNames.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {activeProductNames.map((pName, idx) => (
+                                  <span key={idx} className="bg-brand-paper px-2 py-0.5 rounded-md text-[9px] text-brand-ink border border-brand-wood/5 inline-block truncate max-w-[120px]" title={pName}>
+                                    {pName}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-[10px] italic text-brand-clay">Nenhum curso liberado</span>
+                            )}
+                          </td>
+                          <td className="p-4">
+                            {(u as any).status === 'blocked' ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-red-100 text-red-800 border border-red-200">
+                                <Lock className="w-2.5 h-2.5" /> Suspenso
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <Unlock className="w-2.5 h-2.5" /> Ativo
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-4 text-right space-x-2">
+                            <button
+                              onClick={() => setEditingUser(u)}
+                              className="text-brand-wood hover:text-brand-clay font-bold"
+                            >
+                              Editar
+                            </button>
+                            {u.email !== 'andrewfmlemos@gmail.com' && (
+                              <button
+                                onClick={() => onDeleteUser(u.id)}
+                                className="text-red-500 hover:text-red-700 font-bold"
+                              >
+                                Excluir
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 8: COMMENTS MODERATION */}
+        {activeTab === 'comments' && (
+          <div className="space-y-6" id="comments-tab">
+            <div>
+              <h2 className="text-xl font-serif font-bold text-brand-ink">Moderação de Comentários & Fórum</h2>
+              <p className="text-xs text-brand-clay font-sans">Visualize e responda às dúvidas e comentários feitos pelos alunos em todas as aulas.</p>
+            </div>
+
+            <div className="space-y-4 font-sans text-xs">
+              {comments.filter(c => !c.parentCommentId).map(comm => {
+                const subReplies = comments.filter(r => r.parentCommentId === comm.id);
+                const isReplying = replyingCommentId === comm.id;
+
+                return (
+                  <div key={comm.id} className="bg-white border border-brand-wood/10 rounded-3xl p-5 shadow-sm space-y-4">
+                    <div className="flex justify-between items-start">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-full bg-brand-clay/10 text-brand-wood flex items-center justify-center font-bold">
+                          {comm.studentName?.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <span className="font-bold text-brand-ink block">{comm.studentName} ({comm.studentEmail})</span>
+                          <span className="text-[9px] text-brand-clay block">Em {new Date(comm.createdAt).toLocaleDateString()} • Aula ID: <code>{comm.lessonId}</code></span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => onDeleteComment(comm.id)}
+                        className="text-red-500 hover:bg-red-50 p-2 border border-red-100/10 rounded-full flex items-center justify-center"
+                        title="Excluir Comentário Principal"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="p-4 bg-brand-paper rounded-2xl text-brand-ink italic leading-relaxed border border-brand-wood/5">
+                      "{comm.text}"
+                    </div>
+
+                    {/* Sub replies list */}
+                    {subReplies.length > 0 && (
+                      <div className="pl-6 border-l-2 border-brand-wood/20 space-y-3 pt-1">
+                        {subReplies.map(rep => (
+                          <div key={rep.id} className="bg-brand-paper/50 p-3.5 rounded-2xl border border-brand-wood/5 space-y-1.5">
+                            <div className="flex justify-between items-center text-[10px]">
+                              <span className="font-bold text-brand-wood uppercase tracking-wider">{rep.studentName} {rep.studentEmail === 'andrewfmlemos@gmail.com' ? '👑 Mestre' : '• Resposta'}</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-brand-clay">{new Date(rep.createdAt).toLocaleDateString()}</span>
+                                <button
+                                  onClick={() => onDeleteComment(rep.id)}
+                                  className="text-red-500 hover:text-red-700 font-bold ml-1.5"
+                                >
+                                  Excluir
+                                </button>
+                              </div>
+                            </div>
+                            <p className="text-brand-ink leading-relaxed">{rep.text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Reply triggers */}
+                    {!isReplying ? (
+                      <button
+                        onClick={() => { setReplyingCommentId(comm.id); setCommentReplyText(''); }}
+                        className="text-[9px] font-sans font-bold uppercase tracking-widest text-brand-wood border border-brand-wood/15 hover:bg-brand-paper px-4 py-2 rounded-full transition-all"
+                      >
+                        Responder Comentário
+                      </button>
+                    ) : (
+                      <div className="space-y-2 pt-2 border-t border-brand-wood/5">
+                        <textarea
+                          placeholder="Escreva a resposta oficial do Mestre..."
+                          value={commentReplyText}
+                          onChange={e => setCommentReplyText(e.target.value)}
+                          className="w-full p-3 bg-brand-paper border border-brand-wood/15 rounded-xl text-brand-ink text-xs focus:outline-none focus:ring-1 focus:ring-brand-wood"
+                          rows={2}
+                        />
+                        <div className="flex justify-end gap-2 text-[9px] uppercase font-sans tracking-widest font-bold">
+                          <button onClick={() => setReplyingCommentId(null)} className="px-3.5 py-1.5 bg-white border border-brand-wood/10 rounded-full">Cancelar</button>
+                          <button
+                            onClick={() => {
+                              if (!commentReplyText.trim() || !currentUser) return;
+                              onAddComment({
+                                id: 'rep_' + Date.now(),
+                                lessonId: comm.lessonId,
+                                courseId: comm.courseId,
+                                studentId: currentUser.id,
+                                studentName: currentUser.name,
+                                studentEmail: currentUser.email,
+                                text: commentReplyText,
+                                parentCommentId: comm.id,
+                                createdAt: new Date().toISOString()
+                              });
+                              setReplyingCommentId(null);
+                            }}
+                            className="px-3.5 py-1.5 bg-brand-wood text-white rounded-full"
+                          >
+                            Enviar Resposta
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {comments.filter(c => !c.parentCommentId).length === 0 && (
+                <p className="text-center italic text-brand-clay py-12">Nenhum comentário registrado.</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 9: CERTIFICATES MANAGEMENT */}
+        {activeTab === 'certificates' && (
+          <div className="space-y-6" id="certificates-tab">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-serif font-bold text-brand-ink">Emissão de Certificados Autênticos</h2>
+                <p className="text-xs text-brand-clay font-sans">Veja todos os certificados emitidos e autenticados pela escola ou crie novos certificados manualmente.</p>
+              </div>
+              <button
+                onClick={() => setIssuingCertificate({ studentId: '', studentName: '', studentEmail: '', courseId: '', courseTitle: '' })}
+                className="inline-flex items-center gap-1.5 bg-brand-wood hover:bg-brand-clay text-white text-[10px] font-sans font-medium uppercase tracking-widest px-5 py-2.5 rounded-full shadow-md transition-all"
+              >
+                <Plus className="w-4 h-4" /> Emitir Manualmente
+              </button>
+            </div>
+
+            {/* Manual Certificate Issuing form */}
+            {issuingCertificate && (
+              <div className="bg-brand-paper p-6 rounded-3xl border border-brand-wood/10 space-y-4">
+                <h3 className="font-serif font-bold text-brand-ink text-xs">Emitir Novo Certificado de Conclusão</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-sans">
+                  
+                  {/* Student selector */}
+                  <div className="space-y-1">
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Aluno a Receber o Certificado</label>
+                    <select
+                      value={issuingCertificate.studentEmail || ''}
+                      onChange={e => {
+                        const sel = users.find(u => u.email === e.target.value);
+                        if (sel) {
+                          setIssuingCertificate({
+                            ...issuingCertificate,
+                            studentId: sel.id,
+                            studentName: sel.name,
+                            studentEmail: sel.email
+                          });
+                        }
+                      }}
+                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
+                    >
+                      <option value="">-- Escolha um Aluno --</option>
+                      {users.map(u => (
+                        <option key={u.id} value={u.email}>{u.name} ({u.email})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Course selector */}
+                  <div className="space-y-1">
+                    <label className="font-bold text-brand-clay uppercase tracking-wider text-[9px]">Curso Concluído</label>
+                    <select
+                      value={issuingCertificate.courseId || ''}
+                      onChange={e => {
+                        const sel = courses.find(c => c.id === e.target.value);
+                        if (sel) {
+                          setIssuingCertificate({
+                            ...issuingCertificate,
+                            courseId: sel.id,
+                            courseTitle: sel.title
+                          });
+                        }
+                      }}
+                      className="w-full p-2.5 bg-white border border-brand-wood/15 rounded-xl text-brand-ink"
+                    >
+                      <option value="">-- Escolha o Curso --</option>
+                      {courses.map(c => (
+                        <option key={c.id} value={c.id}>{c.title}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 text-[10px] uppercase font-sans tracking-widest font-medium pt-3">
+                  <button onClick={() => setIssuingCertificate(null)} className="px-4 py-2 bg-white border border-brand-wood/10 rounded-full">Cancelar</button>
+                  <button
+                    onClick={() => {
+                      if (!issuingCertificate.studentEmail || !issuingCertificate.courseId) {
+                        alert('Por favor, selecione o aluno e o curso!');
+                        return;
+                      }
+                      onIssueCertificate({
+                        id: 'cert_' + Date.now(),
+                        studentId: issuingCertificate.studentId,
+                        studentName: issuingCertificate.studentName,
+                        studentEmail: issuingCertificate.studentEmail,
+                        courseId: issuingCertificate.courseId,
+                        courseTitle: issuingCertificate.courseTitle,
+                        issuedAt: new Date().toISOString()
+                      });
+                      setIssuingCertificate(null);
+                    }}
+                    className="px-4 py-2 bg-brand-wood text-white rounded-full"
+                  >
+                    Confirmar Emissão
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Certificates Table */}
+            <div className="bg-white rounded-3xl border border-brand-wood/10 shadow-sm overflow-hidden text-xs font-sans">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-brand-paper text-brand-clay font-bold uppercase tracking-wider text-[10px] border-b border-brand-wood/5">
+                      <th className="p-4">Aluno Certificado</th>
+                      <th className="p-4">Curso de Especialização</th>
+                      <th className="p-4">Código de Verificação</th>
+                      <th className="p-4">Data Emissão</th>
+                      <th className="p-4 text-right">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-brand-wood/5">
+                    {certificates.map(cert => (
+                      <tr key={cert.id} className="hover:bg-brand-paper/30">
+                        <td className="p-4">
+                          <span className="font-bold text-brand-ink block">{cert.studentName}</span>
+                          <span className="text-[10px] font-mono text-brand-clay block">{cert.studentEmail}</span>
+                        </td>
+                        <td className="p-4 font-serif font-bold text-brand-wood text-xs">
+                          🎓 {cert.courseTitle}
+                        </td>
+                        <td className="p-4 font-mono font-bold text-brand-clay text-[10px]">
+                          {cert.id}
+                        </td>
+                        <td className="p-4 text-brand-clay">
+                          {new Date(cert.issuedAt).toLocaleDateString()}
+                        </td>
+                        <td className="p-4 text-right">
+                          <button
+                            onClick={() => onDeleteCertificate(cert.id)}
+                            className="text-red-500 hover:text-red-700 font-bold"
+                          >
+                            Excluir / Revogar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {certificates.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="text-center p-8 text-brand-clay italic">Nenhum certificado registrado no sistema.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}

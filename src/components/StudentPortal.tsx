@@ -1,14 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Course, Module, Lesson, Apostila, StudentProgress, SupportComment, Certificate, User, Sale, SupportTicket } from '../types';
 import { 
   BookOpen, Play, CheckCircle, FileText, HelpCircle, 
   Sparkles, Send, Award, Download, CheckCircle2, Bookmark, BookmarkCheck, ExternalLink, Printer, ShieldAlert,
-  ChevronRight, Camera, UploadCloud, Image as ImageIcon
+  ChevronRight, Camera, UploadCloud, Image as ImageIcon,
+  Lock, Unlock, Pause, Volume2, VolumeX, Maximize, Minimize, RotateCcw, History, ChevronLeft
 } from 'lucide-react';
 import { getDirectDriveUrl } from '../utils/image';
 import { cleanCitations } from '../utils/text';
+import { FileUploader } from './FileUploader';
+import { apiFetch } from '../utils/firebase';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+
+const fetch = apiFetch;
 
 interface StudentPortalProps {
   currentUser: User;
@@ -19,6 +24,7 @@ interface StudentPortalProps {
   progress: StudentProgress[];
   onToggleComplete: (lessonId: string, courseId: string, completed: boolean) => void;
   onToggleFavorite: (lessonId: string, courseId: string, favorited: boolean) => void;
+  onSaveProgress?: (lessonId: string, courseId: string, data: Partial<StudentProgress>) => Promise<void>;
   comments: SupportComment[];
   onAddComment: (commentPayload: any) => void;
   certificates: Certificate[];
@@ -37,6 +43,7 @@ export default function StudentPortal({
   progress,
   onToggleComplete,
   onToggleFavorite,
+  onSaveProgress,
   comments,
   onAddComment,
   certificates,
@@ -64,6 +71,27 @@ export default function StudentPortal({
   const [aiChatHistory, setAiChatHistory] = useState<{ role: 'user' | 'model'; text: string }[]>([]);
   const [aiLoading, setAiLoading] = useState(false);
 
+  // Extended AI Feature States
+  const [aiSummary, setAiSummary] = useState('');
+  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
+  
+  const [aiExercises, setAiExercises] = useState('');
+  const [aiExercisesLoading, setAiExercisesLoading] = useState(false);
+  
+  const [aiMaterial, setAiMaterial] = useState('');
+  const [aiMaterialLoading, setAiMaterialLoading] = useState(false);
+  
+  const [aiCorrectionQuestion, setAiCorrectionQuestion] = useState('Como realizar o corte a favor das fibras da madeira com segurança?');
+  const [aiCorrectionInput, setAiCorrectionInput] = useState('');
+  const [aiCorrection, setAiCorrection] = useState('');
+  const [aiCorrectionLoading, setAiCorrectionLoading] = useState(false);
+  
+  const [aiCustomQuiz, setAiCustomQuiz] = useState<any>(null);
+  const [aiCustomQuizLoading, setAiCustomQuizLoading] = useState(false);
+  const [aiCustomQuizSelected, setAiCustomQuizSelected] = useState<number | null>(null);
+  const [aiCustomQuizChecked, setAiCustomQuizChecked] = useState(false);
+  const [aiCustomQuizIsCorrect, setAiCustomQuizIsCorrect] = useState<boolean | null>(null);
+
   // Comments / Support Section States
   const [newComment, setNewComment] = useState('');
   const [activeReplyBox, setActiveReplyBox] = useState<string | null>(null);
@@ -81,11 +109,296 @@ export default function StudentPortal({
   const [selectedAnswers, setSelectedAnswers] = useState<{ [quizId: string]: number }>({});
   const [quizResults, setQuizResults] = useState<{ [quizId: string]: boolean }>({});
 
+  // Player control states
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const playerContainerRef = useRef<HTMLDivElement | null>(null);
+  const autoplayTimeoutRef = useRef<any>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(1);
+  const [isMuted, setIsMuted] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isPiP, setIsPiP] = useState(false);
+  
+  // Custom toast/notification for resume prompt or auto next
+  const [toastMessage, setToastMessage] = useState<{ text: string; actionText?: string; onAction?: () => void } | null>(null);
+  
+  // Session tracking
+  const [sessionWatchTime, setSessionWatchTime] = useState(0);
+
   const purchasedCourseIds = currentUser.purchasedProducts.filter(id => id.startsWith('course'));
   const purchasedApostilaIds = currentUser.purchasedProducts.filter(id => id.startsWith('ebook'));
 
   const myCourses = courses.filter(c => currentUser.purchasedProducts.includes(c.id));
   const myApostilas = apostilas.filter(a => currentUser.purchasedProducts.includes(a.id));
+
+  const saveStudentProgress = async (lessonId: string, courseId: string, data: Partial<StudentProgress>) => {
+    if (onSaveProgress) {
+      await onSaveProgress(lessonId, courseId, data);
+    } else {
+      try {
+        await fetch('/api/v1/progress', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            studentId: currentUser.id,
+            lessonId,
+            courseId,
+            ...data
+          })
+        });
+      } catch (err) {
+        console.error('Error saving progress:', err);
+      }
+    }
+  };
+
+  const formatTime = (secs: number) => {
+    if (isNaN(secs)) return '00:00';
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = Math.floor(secs % 60);
+    const mStr = m.toString().padStart(2, '0');
+    const sStr = s.toString().padStart(2, '0');
+    if (h > 0) {
+      return `${h}:${mStr}:${sStr}`;
+    }
+    return `${mStr}:${sStr}`;
+  };
+
+  // Setup lesson access, history tracking, auto-resume position
+  useEffect(() => {
+    if (autoplayTimeoutRef.current) {
+      clearTimeout(autoplayTimeoutRef.current);
+      autoplayTimeoutRef.current = null;
+    }
+
+    if (currentLesson && selectedCourse) {
+      // Save lastAccessed to record history
+      saveStudentProgress(currentLesson.id, selectedCourse.id, {
+        lastAccessed: new Date().toISOString()
+      });
+      
+      // Auto-resume checking
+      const currentProg = progress.find(p => p.studentId === currentUser.id && p.lessonId === currentLesson.id);
+      if (currentProg && currentProg.lastPosition && currentProg.lastPosition > 2) {
+        const pos = currentProg.lastPosition;
+        setTimeout(() => {
+          if (videoRef.current) {
+            videoRef.current.currentTime = pos;
+            setToastMessage({
+              text: `Vídeo retomado de ${formatTime(pos)} de onde você parou!`,
+              actionText: "Recomeçar do Início",
+              onAction: () => {
+                if (videoRef.current) {
+                  videoRef.current.currentTime = 0;
+                  setToastMessage(null);
+                }
+              }
+            });
+            setTimeout(() => {
+              setToastMessage(null);
+            }, 5000);
+          }
+        }, 300);
+      } else {
+        setToastMessage(null);
+      }
+    }
+    
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setPlaybackSpeed(1);
+    setSessionWatchTime(0);
+
+    return () => {
+      if (autoplayTimeoutRef.current) {
+        clearTimeout(autoplayTimeoutRef.current);
+        autoplayTimeoutRef.current = null;
+      }
+    };
+  }, [currentLesson?.id]);
+
+  // Periodic watch time tracking & position syncing
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    if (isPlaying && currentLesson && selectedCourse) {
+      interval = setInterval(() => {
+        setSessionWatchTime(prev => {
+          const newWatchTime = prev + 1;
+          const currentProg = progress.find(p => p.studentId === currentUser.id && p.lessonId === currentLesson.id);
+          const accumulatedWatchTime = (currentProg?.watchTime || 0) + 1;
+          
+          if (newWatchTime % 5 === 0 && videoRef.current) {
+            saveStudentProgress(currentLesson.id, selectedCourse.id, {
+              lastPosition: videoRef.current.currentTime,
+              watchTime: accumulatedWatchTime
+            });
+          }
+          return newWatchTime;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isPlaying, currentLesson?.id, selectedCourse?.id]);
+
+  const handlePauseOrUnload = () => {
+    if (videoRef.current && currentLesson && selectedCourse) {
+      const currentProg = progress.find(p => p.studentId === currentUser.id && p.lessonId === currentLesson.id);
+      const accumulatedWatchTime = (currentProg?.watchTime || 0) + sessionWatchTime;
+      saveStudentProgress(currentLesson.id, selectedCourse.id, {
+        lastPosition: videoRef.current.currentTime,
+        watchTime: accumulatedWatchTime
+      });
+    }
+  };
+
+  const togglePlay = () => {
+    if (videoRef.current) {
+      if (isPlaying) {
+        videoRef.current.pause();
+        handlePauseOrUnload();
+        setIsPlaying(false);
+      } else {
+        videoRef.current.play().then(() => {
+          setIsPlaying(true);
+        }).catch(err => console.log('Playback error:', err));
+      }
+    }
+  };
+
+  const handleTimelineChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const time = parseFloat(e.target.value);
+    if (videoRef.current) {
+      videoRef.current.currentTime = time;
+      setCurrentTime(time);
+    }
+  };
+
+  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseFloat(e.target.value);
+    setVolume(val);
+    if (videoRef.current) {
+      videoRef.current.volume = val;
+      videoRef.current.muted = val === 0;
+      setIsMuted(val === 0);
+    }
+  };
+
+  const toggleMute = () => {
+    if (videoRef.current) {
+      const nextMute = !isMuted;
+      setIsMuted(nextMute);
+      videoRef.current.muted = nextMute;
+      if (!nextMute && volume === 0) {
+        setVolume(0.5);
+        videoRef.current.volume = 0.5;
+      }
+    }
+  };
+
+  const changeSpeed = (speed: number) => {
+    setPlaybackSpeed(speed);
+    if (videoRef.current) {
+      videoRef.current.playbackRate = speed;
+    }
+  };
+
+  const toggleFullscreen = () => {
+    if (!playerContainerRef.current) return;
+    if (!document.fullscreenElement) {
+      playerContainerRef.current.requestFullscreen()
+        .then(() => setIsFullscreen(true))
+        .catch(err => console.error(err));
+    } else {
+      document.exitFullscreen()
+        .then(() => setIsFullscreen(false))
+        .catch(err => console.error(err));
+    }
+  };
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  const togglePiP = () => {
+    if (videoRef.current) {
+      if (document.pictureInPictureElement) {
+        document.exitPictureInPicture()
+          .then(() => setIsPiP(false))
+          .catch(err => console.error(err));
+      } else {
+        videoRef.current.requestPictureInPicture()
+          .then(() => setIsPiP(true))
+          .catch(err => console.error(err));
+      }
+    }
+  };
+
+  const handleTimeUpdate = () => {
+    if (videoRef.current) {
+      const current = videoRef.current.currentTime;
+      const dur = videoRef.current.duration;
+      setCurrentTime(current);
+      if (dur && dur > 0) {
+        setDuration(dur);
+        // Auto complete progress at 90%
+        if (current / dur >= 0.90 && !isLessonCompleted(currentLesson!.id)) {
+          onToggleComplete(currentLesson!.id, selectedCourse!.id, true);
+        }
+      }
+    }
+  };
+
+  const handleVideoEnded = () => {
+    setIsPlaying(false);
+    if (currentLesson && selectedCourse) {
+      onToggleComplete(currentLesson.id, selectedCourse.id, true);
+      
+      const courseLessons = lessons.filter(l => l.courseId === selectedCourse.id).sort((a,b) => a.order - b.order);
+      const currentIndex = courseLessons.findIndex(l => l.id === currentLesson.id);
+      if (currentIndex !== -1 && currentIndex + 1 < courseLessons.length) {
+        if (autoplayTimeoutRef.current) {
+          clearTimeout(autoplayTimeoutRef.current);
+        }
+
+        setToastMessage({
+          text: "Aula concluída! Iniciando próxima aula em 3 segundos...",
+          actionText: "Cancelar Autoplay",
+          onAction: () => {
+            if (autoplayTimeoutRef.current) {
+              clearTimeout(autoplayTimeoutRef.current);
+              autoplayTimeoutRef.current = null;
+            }
+            setToastMessage(null);
+          }
+        });
+        
+        autoplayTimeoutRef.current = setTimeout(() => {
+          setCurrentLesson(courseLessons[currentIndex + 1]);
+          setLessonSubTab('content');
+          setAiChatHistory([]);
+          setToastMessage(null);
+          autoplayTimeoutRef.current = null;
+        }, 3000);
+      } else {
+        setToastMessage({
+          text: "Parabéns! Você concluiu a última aula deste curso!",
+        });
+        setTimeout(() => setToastMessage(null), 5000);
+      }
+    }
+  };
 
   // Autoplay / Auto-continue lessons trigger
   const handleCompleteAndNext = (lesson: Lesson, courseId: string) => {
@@ -109,6 +422,14 @@ export default function StudentPortal({
   // Helper selectors
   const isLessonCompleted = (lessonId: string) => {
     return progress.some(p => p.studentId === currentUser.id && p.lessonId === lessonId && p.completed);
+  };
+
+  const isLessonLocked = (lessonId: string, courseId: string) => {
+    const courseLessons = lessons.filter(l => l.courseId === courseId).sort((a,b) => a.order - b.order);
+    const idx = courseLessons.findIndex(l => l.id === lessonId);
+    if (idx <= 0) return false;
+    const prev = courseLessons[idx - 1];
+    return !isLessonCompleted(prev.id);
   };
 
   const isLessonFavorited = (lessonId: string) => {
@@ -145,7 +466,7 @@ export default function StudentPortal({
     setAiLoading(true);
 
     try {
-      const res = await fetch('/api/gemini/tutor', {
+      const res = await fetch('/api/v1/gemini/tutor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -160,6 +481,119 @@ export default function StudentPortal({
       console.error('Erro no Tutor de IA:', err);
     } finally {
       setAiLoading(false);
+    }
+  };
+
+  const handleGenerateSummary = async () => {
+    if (!currentLesson) return;
+    setAiSummaryLoading(true);
+    try {
+      const res = await fetch('/api/v1/gemini/summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lessonTitle: currentLesson.title,
+          lessonText: currentLesson.textContent || ''
+        })
+      });
+      const data = await res.json();
+      setAiSummary(data.summary || '');
+    } catch (err) {
+      console.error('Erro ao gerar resumo de IA:', err);
+    } finally {
+      setAiSummaryLoading(false);
+    }
+  };
+
+  const handleSuggestExercises = async () => {
+    if (!currentLesson) return;
+    setAiExercisesLoading(true);
+    try {
+      const res = await fetch('/api/v1/gemini/exercises', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lessonTitle: currentLesson.title,
+          lessonText: currentLesson.textContent || ''
+        })
+      });
+      const data = await res.json();
+      setAiExercises(data.exercises || '');
+    } catch (err) {
+      console.error('Erro ao sugerir exercícios de IA:', err);
+    } finally {
+      setAiExercisesLoading(false);
+    }
+  };
+
+  const handleGenerateMaterial = async () => {
+    if (!currentLesson) return;
+    setAiMaterialLoading(true);
+    try {
+      const res = await fetch('/api/v1/gemini/material', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lessonTitle: currentLesson.title,
+          lessonText: currentLesson.textContent || ''
+        })
+      });
+      const data = await res.json();
+      setAiMaterial(data.material || '');
+    } catch (err) {
+      console.error('Erro ao gerar material de IA:', err);
+    } finally {
+      setAiMaterialLoading(false);
+    }
+  };
+
+  const handleRequestCorrection = async () => {
+    if (!currentLesson || !aiCorrectionInput.trim()) return;
+    setAiCorrectionLoading(true);
+    try {
+      const res = await fetch('/api/v1/gemini/correction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lessonTitle: currentLesson.title,
+          lessonText: currentLesson.textContent || '',
+          question: aiCorrectionQuestion,
+          userAnswer: aiCorrectionInput
+        })
+      });
+      const data = await res.json();
+      setAiCorrection(data.correction || '');
+    } catch (err) {
+      console.error('Erro ao corrigir resposta de IA:', err);
+    } finally {
+      setAiCorrectionLoading(false);
+    }
+  };
+
+  const handleGenerateCustomQuiz = async () => {
+    if (!currentLesson) return;
+    setAiCustomQuizLoading(true);
+    setAiCustomQuizSelected(null);
+    setAiCustomQuizChecked(false);
+    setAiCustomQuizIsCorrect(null);
+    try {
+      const res = await fetch('/api/v1/gemini/quiz', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lessonTitle: currentLesson.title,
+          lessonDescription: currentLesson.description,
+          lessonText: currentLesson.textContent || ''
+        })
+      });
+      const data = await res.json();
+      if (data.questions && data.questions.length > 0) {
+        setAiCustomQuiz(data.questions[0]);
+      }
+    } catch (err) {
+      console.error('Erro ao gerar quiz personalizado de IA:', err);
+    } finally {
+      setAiCustomQuizLoading(false);
     }
   };
 
@@ -204,7 +638,7 @@ export default function StudentPortal({
     if (!certificateToVerify.trim()) return;
 
     try {
-      const res = await fetch(`/api/certificates/validate/${certificateToVerify.trim()}`);
+      const res = await fetch(`/api/v1/certificates/validate/${certificateToVerify.trim()}`);
       const data = await res.json();
       setVerificationResult(data);
     } catch (err) {
@@ -261,7 +695,110 @@ export default function StudentPortal({
 
         {activeTab === 'my_products' && (
           <div className="space-y-12">
-            {/* Courses section */}
+            {/* Top dashboard quick resume section (Favorites and History) */}
+            {(() => {
+              // 1. Favorites
+              const favoriteProgressList = progress.filter(p => p.studentId === currentUser.id && p.favorited);
+              const favoriteLessons = lessons.filter(l => favoriteProgressList.some(f => f.lessonId === l.id));
+
+              // 2. Recently Accessed History
+              const historyProgressList = progress
+                .filter(p => p.studentId === currentUser.id && p.lastAccessed)
+                .sort((a, b) => new Date(b.lastAccessed!).getTime() - new Date(a.lastAccessed!).getTime())
+                .slice(0, 4);
+
+              const historyItems = historyProgressList.map(hp => {
+                const lesson = lessons.find(l => l.id === hp.lessonId);
+                const course = courses.find(c => c.id === hp.courseId);
+                return { lesson, course, progress: hp };
+              }).filter(item => item.lesson && item.course) as { lesson: Lesson; course: Course; progress: StudentProgress }[];
+
+              if (favoriteLessons.length === 0 && historyItems.length === 0) return null;
+
+              return (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 border-b border-brand-wood/10 pb-8" id="quick-resume-dashboard">
+                  {/* History section */}
+                  {historyItems.length > 0 && (
+                    <div className="space-y-4">
+                      <h3 className="text-xs font-sans font-bold text-brand-wood uppercase tracking-widest flex items-center gap-2">
+                        <History className="w-4 h-4 text-brand-clay" /> Histórico de Aulas Recentes
+                      </h3>
+                      <div className="space-y-3">
+                        {historyItems.map(({ lesson, course, progress: hp }) => {
+                          const hasLastPos = hp.lastPosition && hp.lastPosition > 0;
+                          return (
+                            <div 
+                              key={lesson.id}
+                              className="bg-white border border-brand-wood/10 rounded-2xl p-4 flex justify-between items-center hover:shadow-md transition-all gap-4"
+                            >
+                              <div className="space-y-1">
+                                <span className="text-[9px] bg-brand-clay/10 text-brand-clay font-sans font-bold px-2 py-0.5 rounded-full uppercase">
+                                  {course.title}
+                                </span>
+                                <h4 className="font-serif font-bold text-brand-ink text-xs leading-tight">{lesson.title}</h4>
+                                {hasLastPos && (
+                                  <p className="text-[10px] text-brand-clay font-mono">
+                                    Retomar em: {formatTime(hp.lastPosition!)}
+                                  </p>
+                                )}
+                              </div>
+                              <button
+                                onClick={() => {
+                                  setSelectedCourse(course);
+                                  setCurrentLesson(lesson);
+                                }}
+                                className="bg-brand-paper hover:bg-brand-wood hover:text-[#FDFCFB] text-brand-wood font-sans font-bold text-[9px] uppercase tracking-widest px-4 py-2 rounded-full border border-brand-wood/15 transition-all shadow-sm flex items-center gap-1 flex-shrink-0 cursor-pointer"
+                              >
+                                <Play className="w-2.5 h-2.5 fill-current" /> Retomar
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Favorites section */}
+                  {favoriteLessons.length > 0 && (
+                    <div className="space-y-4">
+                      <h3 className="text-xs font-sans font-bold text-brand-wood uppercase tracking-widest flex items-center gap-2">
+                        <BookmarkCheck className="w-4 h-4 text-brand-clay" /> Minhas Aulas Favoritas
+                      </h3>
+                      <div className="space-y-3">
+                        {favoriteLessons.slice(0, 4).map(lesson => {
+                          const course = courses.find(c => c.id === lesson.courseId);
+                          if (!course) return null;
+                          return (
+                            <div 
+                              key={lesson.id}
+                              className="bg-white border border-brand-wood/10 rounded-2xl p-4 flex justify-between items-center hover:shadow-md transition-all gap-4"
+                            >
+                              <div className="space-y-1">
+                                <span className="text-[9px] bg-brand-clay/10 text-brand-clay font-sans font-bold px-2 py-0.5 rounded-full uppercase">
+                                  {course.title}
+                                </span>
+                                <h4 className="font-serif font-bold text-brand-ink text-xs leading-tight">{lesson.title}</h4>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  setSelectedCourse(course);
+                                  setCurrentLesson(lesson);
+                                }}
+                                className="bg-brand-wood hover:bg-brand-clay text-[#FDFCFB] font-sans font-bold text-[9px] uppercase tracking-widest px-4 py-2 rounded-full transition-all shadow-md flex items-center gap-1 flex-shrink-0 cursor-pointer"
+                              >
+                                <Play className="w-2.5 h-2.5 fill-white" /> Estudar
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+              {/* Courses section */}
             <div className="space-y-6">
               <h2 className="text-xl font-serif font-bold text-brand-ink flex items-center gap-2">
                 <BookOpen className="w-5 h-5 text-brand-wood" /> Cursos Online Adquiridos
@@ -323,11 +860,29 @@ export default function StudentPortal({
                             onClick={() => {
                               setSelectedCourse(course);
                               const courseLessons = lessons.filter(l => l.courseId === course.id).sort((a,b) => a.order - b.order);
-                              if (courseLessons.length > 0) {
-                                setCurrentLesson(courseLessons[0]);
+                              
+                              // Find the last accessed lesson or first incomplete lesson
+                              const lastAccessedProgress = progress
+                                .filter(p => p.studentId === currentUser.id && p.courseId === course.id && p.lastAccessed)
+                                .sort((a, b) => new Date(b.lastAccessed!).getTime() - new Date(a.lastAccessed!).getTime())[0];
+
+                              let targetLesson = courseLessons[0];
+                              if (lastAccessedProgress) {
+                                const matchingLesson = courseLessons.find(l => l.id === lastAccessedProgress.lessonId);
+                                if (matchingLesson) {
+                                  targetLesson = matchingLesson;
+                                }
+                              } else {
+                                const firstIncomplete = courseLessons.find(l => !isLessonCompleted(l.id));
+                                if (firstIncomplete) {
+                                  targetLesson = firstIncomplete;
+                                }
+                              }
+                              if (targetLesson) {
+                                setCurrentLesson(targetLesson);
                               }
                             }}
-                            className="bg-brand-wood hover:bg-brand-clay text-[#FDFCFB] font-sans font-medium text-[10px] uppercase tracking-widest px-4 py-2 rounded-full shadow-md transition-all flex items-center gap-1.5"
+                            className="bg-brand-wood hover:bg-brand-clay text-[#FDFCFB] font-sans font-medium text-[10px] uppercase tracking-widest px-4 py-2 rounded-full shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
                           >
                             <Play className="w-3 h-3 fill-white" /> Estudar Agora
                           </button>
@@ -540,6 +1095,9 @@ export default function StudentPortal({
     const courseLessons = lessons.filter(l => l.courseId === selectedCourse.id).sort((a,b) => a.order - b.order);
     const courseModules = modules.filter(m => m.courseId === selectedCourse.id).sort((a,b) => a.order - b.order);
     const completedPct = getCourseCompletionPercentage(selectedCourse.id);
+    const currentIndex = courseLessons.findIndex(l => l.id === currentLesson.id);
+    const prevLesson = currentIndex > 0 ? courseLessons[currentIndex - 1] : null;
+    const nextLesson = currentIndex !== -1 && currentIndex + 1 < courseLessons.length ? courseLessons[currentIndex + 1] : null;
 
     return (
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8" id="course-classroom">
@@ -581,40 +1139,61 @@ export default function StudentPortal({
                     {modLessons.map(les => {
                       const active = les.id === currentLesson.id;
                       const completed = isLessonCompleted(les.id);
+                      const locked = isLessonLocked(les.id, selectedCourse.id);
                       return (
                         <div 
                           key={les.id}
                           onClick={() => {
+                            if (locked) {
+                              setToastMessage({ 
+                                text: `A aula "${les.title}" está bloqueada. Conclua as aulas anteriores primeiro para desbloquear automaticamente!` 
+                              });
+                              return;
+                            }
                             setCurrentLesson(les);
                             setLessonSubTab('content');
                             setAiChatHistory([]);
                           }}
-                          className={`flex items-center justify-between p-2.5 rounded-2xl text-xs cursor-pointer transition-all border ${
-                            active 
-                              ? 'bg-brand-paper border-brand-wood/20 text-brand-wood font-bold shadow-sm' 
-                              : 'bg-white border-transparent text-brand-clay hover:bg-brand-paper hover:text-brand-wood'
+                          className={`flex items-center justify-between p-2.5 rounded-2xl text-xs transition-all border ${
+                            locked 
+                              ? 'bg-brand-paper/40 border-transparent text-brand-clay/40 cursor-not-allowed opacity-50'
+                              : active 
+                                ? 'bg-brand-paper border-brand-wood/20 text-brand-wood font-bold shadow-sm cursor-pointer' 
+                                : 'bg-white border-transparent text-brand-clay hover:bg-brand-paper hover:text-brand-wood cursor-pointer'
                           }`}
                         >
                           <div className="flex items-center gap-2.5 truncate">
-                            <button
-                              onClick={(e) => {
-                                  e.stopPropagation();
-                                  onToggleComplete(les.id, selectedCourse.id, !completed);
-                              }}
-                              className={`w-5 h-5 rounded-full border flex items-center justify-center transition-all ${
-                                completed 
-                                  ? 'bg-brand-wood border-brand-wood text-white' 
-                                  : 'border-brand-wood/20 hover:border-brand-wood bg-white'
-                              }`}
-                            >
-                              {completed && <span className="text-[9px]">✓</span>}
-                            </button>
+                            {locked ? (
+                              <div className="w-5 h-5 rounded-full border border-brand-wood/10 flex items-center justify-center bg-brand-paper/50 text-brand-clay/40 flex-shrink-0">
+                                <Lock className="w-2.5 h-2.5" />
+                              </div>
+                            ) : (
+                              <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onToggleComplete(les.id, selectedCourse.id, !completed);
+                                }}
+                                className={`w-5 h-5 rounded-full border flex items-center justify-center transition-all flex-shrink-0 ${
+                                  completed 
+                                    ? 'bg-brand-wood border-brand-wood text-white' 
+                                    : 'border-brand-wood/20 hover:border-brand-wood bg-white'
+                                }`}
+                              >
+                                {completed && <span className="text-[9px]">✓</span>}
+                              </button>
+                            )}
                             <span className="truncate">{les.title}</span>
                           </div>
 
                           <div className="flex items-center gap-1 text-brand-clay text-[10px]">
-                            {les.videoUrl && <Play className="w-2.5 h-2.5 fill-brand-clay/30" />}
-                            <span>{les.duration || '10m'}</span>
+                            {locked ? (
+                              <span className="text-[8px] uppercase tracking-wider bg-brand-paper border border-brand-wood/10 px-1.5 py-0.5 rounded text-brand-clay/50 font-bold">Bloqueada</span>
+                            ) : (
+                              <>
+                                {les.videoUrl && <Play className="w-2.5 h-2.5 fill-brand-clay/30" />}
+                                <span>{les.duration || '10m'}</span>
+                              </>
+                            )}
                           </div>
                         </div>
                       );
@@ -628,26 +1207,208 @@ export default function StudentPortal({
 
         {/* Right Classroom Workspace */}
         <div className="lg:col-span-8 space-y-6">
-          {/* Simulated Video Player */}
-          {currentLesson.videoUrl ? (
-            <div className="bg-brand-ink rounded-3xl overflow-hidden aspect-video border border-brand-wood/10 relative group shadow-lg">
-              <video 
-                src={currentLesson.videoUrl} 
-                controls 
-                className="w-full h-full object-cover"
-                poster={getDirectDriveUrl(selectedCourse.coverUrl)}
-              />
-              <div className="absolute top-4 right-4 bg-[#1A1A1A]/80 backdrop-blur-md px-3 py-1 rounded-full text-[9px] text-[#DFD3C3] font-sans font-bold uppercase tracking-widest flex items-center gap-1.5 border border-brand-wood/20">
-                <Sparkles className="w-3 h-3 text-brand-clay" /> Canal Exclusivo Protegido
+              {/* Custom Video Player */}
+              {currentLesson.videoUrl ? (
+                <div 
+                  ref={playerContainerRef} 
+                  className="bg-[#0D0B0A] rounded-3xl overflow-hidden aspect-video border border-brand-wood/15 relative group shadow-2xl select-none"
+                >
+                  <video 
+                    ref={videoRef}
+                    src={currentLesson.videoUrl} 
+                    className="w-full h-full object-contain"
+                    poster={getDirectDriveUrl(selectedCourse.coverUrl)}
+                    onTimeUpdate={handleTimeUpdate}
+                    onPlay={() => setIsPlaying(true)}
+                    onPause={() => { setIsPlaying(false); handlePauseOrUnload(); }}
+                    onEnded={handleVideoEnded}
+                    onClick={togglePlay}
+                  />
+                  
+                  {/* Custom controls overlay panel */}
+                  <div className={`absolute inset-0 bg-gradient-to-t from-black/90 via-black/10 to-black/50 flex flex-col justify-between p-5 transition-opacity duration-300 ${isPlaying ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'}`}>
+                    {/* Top HUD */}
+                    <div className="flex justify-between items-center">
+                      <div className="bg-[#1A1A1A]/90 backdrop-blur-md px-3.5 py-1.5 rounded-full text-[9px] text-[#DFD3C3] font-sans font-bold uppercase tracking-widest flex items-center gap-1.5 border border-brand-wood/20 shadow-md">
+                        <Sparkles className="w-3 h-3 text-brand-clay animate-pulse" /> Conexão Segura
+                      </div>
+                      
+                      <span className="text-[10px] bg-brand-wood text-white font-sans font-bold px-2.5 py-1 rounded-full border border-white/10 shadow-sm">
+                        {playbackSpeed}x
+                      </span>
+                    </div>
+
+                    {/* Centered Large Play Button (when paused) */}
+                    {!isPlaying && (
+                      <button 
+                        onClick={togglePlay} 
+                        className="absolute inset-0 m-auto w-16 h-16 bg-brand-wood hover:bg-brand-clay text-[#FDFCFB] rounded-full flex items-center justify-center shadow-2xl transition-all scale-100 hover:scale-110 border border-white/10"
+                      >
+                        <Play className="w-6 h-6 fill-white ml-1" />
+                      </button>
+                    )}
+
+                    {/* Bottom HUD Control Panel */}
+                    <div className="space-y-4 pt-4">
+                      {/* Seek Slider bar */}
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] text-[#DFD3C3] font-mono select-none">{formatTime(currentTime)}</span>
+                        <input 
+                          type="range" 
+                          min={0} 
+                          max={duration || 100} 
+                          step={0.1}
+                          value={currentTime} 
+                          onChange={handleTimelineChange}
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex-1 accent-brand-clay bg-white/20 hover:bg-white/30 rounded-lg h-1.5 cursor-pointer appearance-none transition-all outline-none"
+                        />
+                        <span className="text-[10px] text-[#DFD3C3] font-mono select-none">{formatTime(duration)}</span>
+                      </div>
+
+                      {/* Control buttons group */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          {/* Play/Pause */}
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); togglePlay(); }} 
+                            className="text-[#DFD3C3] hover:text-[#FDFCFB] transition-colors cursor-pointer" 
+                            title={isPlaying ? "Pausar" : "Reproduzir"}
+                          >
+                            {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current" />}
+                          </button>
+
+                          {/* Skip backward 10s */}
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (videoRef.current) {
+                                videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10);
+                              }
+                            }} 
+                            className="text-[#DFD3C3] hover:text-[#FDFCFB] transition-colors cursor-pointer" 
+                            title="Voltar 10 segundos"
+                          >
+                            <RotateCcw className="w-4.5 h-4.5" />
+                          </button>
+
+                          {/* Volume controls */}
+                          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                            <button onClick={toggleMute} className="text-[#DFD3C3] hover:text-[#FDFCFB] transition-colors cursor-pointer">
+                              {isMuted ? <VolumeX className="w-4.5 h-4.5" /> : <Volume2 className="w-4.5 h-4.5" />}
+                            </button>
+                            <input 
+                              type="range" 
+                              min={0} 
+                              max={1} 
+                              step={0.05}
+                              value={isMuted ? 0 : volume}
+                              onChange={handleVolumeChange}
+                              className="w-16 accent-brand-clay bg-white/20 h-1 rounded cursor-pointer transition-all outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-4" onClick={(e) => e.stopPropagation()}>
+                          {/* Speed dropdown Selector */}
+                          <div className="relative group/speed">
+                            <button className="text-[10px] font-bold text-[#DFD3C3] hover:text-[#FDFCFB] bg-white/10 hover:bg-white/20 border border-white/10 rounded-full px-3 py-1 tracking-wider uppercase transition-all">
+                              Velocidade ({playbackSpeed}x)
+                            </button>
+                            <div className="absolute bottom-full right-0 mb-2 hidden group-hover/speed:flex flex-col bg-[#1A1A1A]/95 backdrop-blur-md rounded-xl border border-brand-wood/20 p-1 w-24 shadow-2xl z-50">
+                              {[0.5, 1, 1.25, 1.5, 2].map(speed => (
+                                <button 
+                                  key={speed} 
+                                  onClick={() => changeSpeed(speed)} 
+                                  className={`text-[10px] font-sans font-bold py-1.5 px-2 rounded-lg text-left transition-colors ${playbackSpeed === speed ? 'bg-brand-wood text-white' : 'text-[#DFD3C3] hover:bg-white/10'}`}
+                                >
+                                  {speed}x
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Picture in Picture */}
+                          <button onClick={togglePiP} className="text-[#DFD3C3] hover:text-[#FDFCFB] transition-colors cursor-pointer" title="Picture-in-Picture">
+                            <ExternalLink className="w-4 h-4" />
+                          </button>
+
+                          {/* Fullscreen */}
+                          <button onClick={toggleFullscreen} className="text-[#DFD3C3] hover:text-[#FDFCFB] transition-colors cursor-pointer" title="Tela Cheia">
+                            {isFullscreen ? <Minimize className="w-4.5 h-4.5" /> : <Maximize className="w-4.5 h-4.5" />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Float Toast messages overlay inside video player container */}
+                  {toastMessage && (
+                    <div className="absolute bottom-16 right-4 left-4 sm:left-auto sm:w-80 bg-brand-wood text-[#FDFCFB] p-3.5 rounded-2xl border border-brand-clay/30 flex flex-col gap-2 shadow-2xl z-50 animate-bounce">
+                      <div className="text-[11px] font-sans font-medium leading-relaxed">
+                        {toastMessage.text}
+                      </div>
+                      {toastMessage.actionText && (
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); toastMessage.onAction?.(); }}
+                          className="self-end text-[9px] font-sans font-bold uppercase tracking-widest bg-brand-paper text-brand-wood px-3 py-1.5 rounded-full hover:bg-brand-clay hover:text-white transition-all shadow"
+                        >
+                          {toastMessage.actionText}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="bg-gradient-to-br from-[#4A3222] to-[#2F1F15] text-[#DFD3C3] rounded-3xl p-8 text-center space-y-3.5 border border-brand-wood/20">
+                  <FileText className="w-10 h-10 text-brand-clay mx-auto" />
+                  <h4 className="font-serif font-bold text-lg">Suporte Teórico e Prático por Escrito</h4>
+                  <p className="text-[#DFD3C3]/80 text-xs max-w-md mx-auto">Esta aula contém materiais detalhados, desenhos anatômicos e arquivos complementares logo abaixo para leitura offline.</p>
+                </div>
+              )}
+
+              {/* Classroom Back/Forward Navigation Panel */}
+              <div className="flex justify-between items-center bg-brand-paper/55 rounded-2xl p-3 border border-brand-wood/10 shadow-sm">
+                <button
+                  disabled={!prevLesson}
+                  onClick={() => {
+                    if (prevLesson) {
+                      setCurrentLesson(prevLesson);
+                      setLessonSubTab('content');
+                      setAiChatHistory([]);
+                    }
+                  }}
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-[10px] font-sans font-bold uppercase tracking-widest transition-all ${
+                    prevLesson 
+                      ? 'bg-white hover:bg-brand-paper text-brand-clay border border-brand-wood/15 hover:text-brand-wood cursor-pointer shadow-sm' 
+                      : 'text-brand-clay/30 bg-transparent border-transparent cursor-not-allowed opacity-40'
+                  }`}
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" /> Aula Anterior
+                </button>
+
+                <span className="text-[10px] font-mono text-brand-clay font-bold uppercase tracking-widest bg-brand-wood/5 px-3 py-1 rounded-full border border-brand-wood/5">
+                  Aula {currentIndex + 1} de {courseLessons.length}
+                </span>
+
+                <button
+                  disabled={!nextLesson || isLessonLocked(nextLesson.id, selectedCourse.id)}
+                  onClick={() => {
+                    if (nextLesson) {
+                      setCurrentLesson(nextLesson);
+                      setLessonSubTab('content');
+                      setAiChatHistory([]);
+                    }
+                  }}
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-[10px] font-sans font-bold uppercase tracking-widest transition-all ${
+                    nextLesson && !isLessonLocked(nextLesson.id, selectedCourse.id)
+                      ? 'bg-brand-wood hover:bg-brand-clay text-white shadow-sm cursor-pointer' 
+                      : 'text-brand-clay/30 bg-transparent border-transparent cursor-not-allowed opacity-40'
+                  }`}
+                >
+                  Próxima Aula <ChevronRight className="w-3.5 h-3.5" />
+                </button>
               </div>
-            </div>
-          ) : (
-            <div className="bg-gradient-to-br from-[#4A3222] to-[#2F1F15] text-[#DFD3C3] rounded-3xl p-8 text-center space-y-3.5 border border-brand-wood/20">
-              <FileText className="w-10 h-10 text-brand-clay mx-auto" />
-              <h4 className="font-serif font-bold text-lg">Suporte Teórico e Prático por Escrito</h4>
-              <p className="text-[#DFD3C3]/80 text-xs max-w-md mx-auto">Esta aula contém materiais detalhados, desenhos anatômicos e arquivos complementares logo abaixo para leitura offline.</p>
-            </div>
-          )}
 
           {/* Lesson Metadata Controls */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-brand-wood/10 pb-4">
@@ -878,74 +1639,303 @@ export default function StudentPortal({
           )}
 
           {lessonSubTab === 'ai_tutor' && (
-            <div className="bg-white rounded-3xl border border-brand-wood/10 shadow-sm overflow-hidden flex flex-col h-[480px]">
-              {/* Header */}
-              <div className="p-4 bg-gradient-to-r from-[#4A3222] to-[#2F1F15] text-[#DFD3C3] border-b border-brand-wood/10 flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-brand-clay fill-brand-clay/30" />
-                  <div>
-                    <h4 className="font-serif font-bold text-xs">Orientador de IA Integrado</h4>
-                    <span className="text-[9px] text-[#DFD3C3]/70">Dúvidas contextuais sobre esta aula de escultura</span>
-                  </div>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-auto lg:h-[650px]" id="student-ai-studio">
+              {/* Left Column: AI Studio Tools Panel */}
+              <div className="lg:col-span-7 bg-brand-paper/40 p-5 rounded-3xl border border-brand-wood/10 overflow-y-auto space-y-6 flex flex-col h-[650px] shadow-inner">
+                <div>
+                  <h3 className="font-serif font-bold text-brand-ink text-base flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-brand-wood animate-pulse" /> Estúdio de Aprendizado IA
+                  </h3>
+                  <p className="text-[11px] text-brand-clay font-sans mt-1">
+                    Ferramentas cognitivas do mestre Andrew Lemos integradas com a inteligência do Gemini.
+                  </p>
                 </div>
-                <span className="px-2.5 py-0.5 bg-brand-wood/20 border border-brand-wood/30 text-[#DFD3C3] font-mono text-[9px] uppercase font-bold rounded-full">
-                  Gemini API
-                </span>
+
+                {/* Sub-section 1: Generative Learning Resources */}
+                <div className="space-y-3 bg-white p-4 rounded-2xl border border-brand-wood/5 shadow-sm">
+                  <h4 className="text-[10px] font-sans font-bold text-brand-wood uppercase tracking-widest">
+                    Geradores de Conteúdo Acadêmico
+                  </h4>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      onClick={handleGenerateSummary}
+                      disabled={aiSummaryLoading}
+                      className="bg-brand-paper hover:bg-brand-wood hover:text-white text-brand-wood font-sans font-bold text-[9px] uppercase tracking-wider py-2.5 px-2 rounded-xl border border-brand-wood/10 transition-all cursor-pointer flex flex-col items-center gap-1 text-center justify-center disabled:opacity-50"
+                    >
+                      <FileText className="w-4 h-4" />
+                      {aiSummaryLoading ? 'Gerando...' : 'Resumo da Aula'}
+                    </button>
+                    <button
+                      onClick={handleSuggestExercises}
+                      disabled={aiExercisesLoading}
+                      className="bg-brand-paper hover:bg-brand-wood hover:text-white text-brand-wood font-sans font-bold text-[9px] uppercase tracking-wider py-2.5 px-2 rounded-xl border border-brand-wood/10 transition-all cursor-pointer flex flex-col items-center gap-1 text-center justify-center disabled:opacity-50"
+                    >
+                      <Award className="w-4 h-4" />
+                      {aiExercisesLoading ? 'Sugerindo...' : 'Exercícios Extras'}
+                    </button>
+                    <button
+                      onClick={handleGenerateMaterial}
+                      disabled={aiMaterialLoading}
+                      className="bg-brand-paper hover:bg-brand-wood hover:text-white text-brand-wood font-sans font-bold text-[9px] uppercase tracking-wider py-2.5 px-2 rounded-xl border border-brand-wood/10 transition-all cursor-pointer flex flex-col items-center gap-1 text-center justify-center disabled:opacity-50"
+                    >
+                      <BookOpen className="w-4 h-4" />
+                      {aiMaterialLoading ? 'Gerando...' : 'Material Extra'}
+                    </button>
+                  </div>
+
+                  {/* Rendering the active academic resource */}
+                  {(aiSummary || aiExercises || aiMaterial || aiSummaryLoading || aiExercisesLoading || aiMaterialLoading) && (
+                    <div className="mt-3 p-4 bg-brand-paper/50 rounded-xl border border-brand-wood/15 max-h-[220px] overflow-y-auto text-xs leading-relaxed font-sans text-brand-ink">
+                      {aiSummaryLoading && <div className="text-center py-4 text-brand-clay animate-pulse">Sintetizando resumo conceitual...</div>}
+                      {aiExercisesLoading && <div className="text-center py-4 text-brand-clay animate-pulse">Estruturando sugestões de treino prático...</div>}
+                      {aiMaterialLoading && <div className="text-center py-4 text-brand-clay animate-pulse">Compilando glossário e referências técnicas...</div>}
+
+                      {!aiSummaryLoading && aiSummary && !aiExercisesLoading && !aiMaterialLoading && (
+                        <div className="markdown-body">
+                          <Markdown>{aiSummary}</Markdown>
+                          <button
+                            onClick={() => setAiSummary('')}
+                            className="mt-3 text-[9px] font-bold text-brand-clay hover:text-brand-wood uppercase tracking-wider block ml-auto"
+                          >
+                            Limpar Resumo
+                          </button>
+                        </div>
+                      )}
+
+                      {!aiExercisesLoading && aiExercises && !aiSummaryLoading && !aiMaterialLoading && (
+                        <div className="markdown-body">
+                          <Markdown>{aiExercises}</Markdown>
+                          <button
+                            onClick={() => setAiExercises('')}
+                            className="mt-3 text-[9px] font-bold text-brand-clay hover:text-brand-wood uppercase tracking-wider block ml-auto"
+                          >
+                            Limpar Exercícios
+                          </button>
+                        </div>
+                      )}
+
+                      {!aiMaterialLoading && aiMaterial && !aiSummaryLoading && !aiExercisesLoading && (
+                        <div className="markdown-body">
+                          <Markdown>{aiMaterial}</Markdown>
+                          <button
+                            onClick={() => setAiMaterial('')}
+                            className="mt-3 text-[9px] font-bold text-brand-clay hover:text-brand-wood uppercase tracking-wider block ml-auto"
+                          >
+                            Limpar Material
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Sub-section 2: Automatic Exercise Correction */}
+                <div className="space-y-3 bg-white p-4 rounded-2xl border border-brand-wood/5 shadow-sm">
+                  <h4 className="text-[10px] font-sans font-bold text-brand-wood uppercase tracking-widest">
+                    Corretor de Exercícios Práticos & Teóricos
+                  </h4>
+                  <div className="space-y-2">
+                    <div className="p-2.5 bg-brand-paper rounded-xl border border-brand-wood/5">
+                      <span className="text-[8px] font-bold uppercase tracking-wider text-brand-wood block">Questão para Resposta:</span>
+                      <span className="text-xs font-serif font-bold text-brand-ink italic">"{aiCorrectionQuestion}"</span>
+                    </div>
+                    <textarea
+                      value={aiCorrectionInput}
+                      onChange={(e) => setAiCorrectionInput(e.target.value)}
+                      placeholder="Redija aqui sua resposta técnica ou reflexiva para receber correção detalhada e nota..."
+                      className="w-full p-3 text-xs bg-brand-paper/10 border border-brand-wood/15 rounded-xl text-brand-ink focus:outline-none focus:ring-1 focus:ring-brand-wood focus:bg-white transition-all h-[75px]"
+                    />
+                    <button
+                      onClick={handleRequestCorrection}
+                      disabled={!aiCorrectionInput.trim() || aiCorrectionLoading}
+                      className="w-full bg-brand-wood hover:bg-brand-clay text-white font-sans font-bold text-[9px] uppercase tracking-widest py-2 rounded-xl transition-all shadow disabled:opacity-40 flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      {aiCorrectionLoading ? 'Avaliando Resposta...' : 'Solicitar Correção do Mestre IA'}
+                    </button>
+                  </div>
+
+                  {/* Rendering Correction Feedback */}
+                  {(aiCorrection || aiCorrectionLoading) && (
+                    <div className="mt-3 p-4 bg-brand-paper/55 rounded-xl border border-brand-wood/15 text-xs font-sans leading-relaxed text-brand-ink max-h-[180px] overflow-y-auto">
+                      {aiCorrectionLoading ? (
+                        <div className="text-center py-4 text-brand-clay animate-pulse">Mestre Andrew está analisando os argumentos técnicos...</div>
+                      ) : (
+                        <div className="markdown-body">
+                          <Markdown>{aiCorrection}</Markdown>
+                          <button
+                            onClick={() => {
+                              setAiCorrection('');
+                              setAiCorrectionInput('');
+                            }}
+                            className="mt-3 text-[9px] font-bold text-brand-clay hover:text-brand-wood uppercase tracking-wider block ml-auto"
+                          >
+                            Nova Tentativa
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Sub-section 3: Customized Quiz Generation */}
+                <div className="space-y-3 bg-white p-4 rounded-2xl border border-brand-wood/5 shadow-sm">
+                  <div className="flex justify-between items-center">
+                    <h4 className="text-[10px] font-sans font-bold text-brand-wood uppercase tracking-widest">
+                      Gerador de Quiz Personalizado
+                    </h4>
+                    <button
+                      onClick={handleGenerateCustomQuiz}
+                      disabled={aiCustomQuizLoading}
+                      className="text-[9px] font-bold text-brand-wood hover:underline uppercase tracking-wider flex items-center gap-1 disabled:opacity-50"
+                    >
+                      {aiCustomQuizLoading ? 'Gerando...' : aiCustomQuiz ? 'Gerar Outro' : 'Criar Desafio'}
+                    </button>
+                  </div>
+
+                  {aiCustomQuizLoading && <div className="text-center py-4 text-xs text-brand-clay animate-pulse">Formulando quiz inédito...</div>}
+
+                  {!aiCustomQuizLoading && aiCustomQuiz && (
+                    <div className="p-3 bg-brand-paper/30 border border-brand-wood/10 rounded-xl space-y-3">
+                      <p className="text-xs font-serif font-bold text-brand-ink">{aiCustomQuiz.question}</p>
+                      <div className="space-y-1.5">
+                        {aiCustomQuiz.options.map((opt: string, i: number) => {
+                          const isSelected = aiCustomQuizSelected === i;
+                          const showCorrect = aiCustomQuizChecked && i === aiCustomQuiz.correctAnswerIndex;
+                          const showWrong = aiCustomQuizChecked && isSelected && i !== aiCustomQuiz.correctAnswerIndex;
+
+                          return (
+                            <div
+                              key={i}
+                              onClick={() => !aiCustomQuizChecked && setAiCustomQuizSelected(i)}
+                              className={`p-2.5 rounded-xl text-xs border cursor-pointer transition-all flex items-center justify-between ${
+                                aiCustomQuizChecked
+                                  ? showCorrect
+                                    ? 'bg-brand-paper border-brand-wood text-brand-wood font-bold'
+                                    : showWrong
+                                      ? 'bg-red-50 border-red-200 text-red-900'
+                                      : 'bg-white border-brand-wood/5 text-brand-clay/40'
+                                  : isSelected
+                                    ? 'border-brand-wood bg-brand-paper text-brand-wood font-semibold'
+                                    : 'border-brand-wood/10 text-brand-clay bg-white hover:bg-brand-paper/50'
+                              }`}
+                            >
+                              <span>{opt}</span>
+                              {aiCustomQuizChecked && showCorrect && <span className="text-[9px] bg-brand-wood text-white px-1.5 py-0.5 rounded-full font-bold">Correto</span>}
+                              {aiCustomQuizChecked && showWrong && <span className="text-[9px] bg-red-600 text-white px-1.5 py-0.5 rounded-full font-bold">Incorreto</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {!aiCustomQuizChecked ? (
+                        <button
+                          onClick={() => {
+                            if (aiCustomQuizSelected !== null) {
+                              setAiCustomQuizChecked(true);
+                              setAiCustomQuizIsCorrect(aiCustomQuizSelected === aiCustomQuiz.correctAnswerIndex);
+                            }
+                          }}
+                          disabled={aiCustomQuizSelected === null}
+                          className="bg-brand-wood hover:bg-brand-clay text-white font-sans font-bold text-[9px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all disabled:opacity-40"
+                        >
+                          Validar Desafio
+                        </button>
+                      ) : (
+                        <div className="flex justify-between items-center text-[10px] pt-1">
+                          <span className={aiCustomQuizIsCorrect ? 'text-brand-wood font-bold' : 'text-red-700 font-bold'}>
+                            {aiCustomQuizIsCorrect ? 'Incrível! Você dominou o assunto.' : 'Ops! Estude o material complementar.'}
+                          </span>
+                          <button
+                            onClick={() => {
+                              setAiCustomQuizSelected(null);
+                              setAiCustomQuizChecked(false);
+                              setAiCustomQuizIsCorrect(null);
+                            }}
+                            className="text-brand-clay hover:text-brand-wood font-bold uppercase tracking-wider text-[9px]"
+                          >
+                            Limpar
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {/* Chat Window */}
-              <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-brand-paper/50">
-                {aiChatHistory.length === 0 && (
-                  <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-3">
-                    <HelpCircle className="w-8 h-8 text-brand-clay animate-bounce" />
-                    <p className="text-xs font-serif font-bold text-brand-ink">Precisa de esclarecimentos técnicos?</p>
-                    <p className="text-[11px] text-brand-clay max-w-xs leading-relaxed font-sans">
-                      Pergunte qualquer aspecto sobre o grafite, a argila ou a anatomia comentada nesta aula teórica.
-                    </p>
+              {/* Right Column: Live Chat with AI Tutor */}
+              <div className="lg:col-span-5 bg-white rounded-3xl border border-brand-wood/10 shadow-sm overflow-hidden flex flex-col h-[650px]">
+                {/* Chat Header */}
+                <div className="p-4 bg-gradient-to-r from-[#4A3222] to-[#2F1F15] text-[#DFD3C3] border-b border-brand-wood/10 flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-brand-clay fill-brand-clay/30" />
+                    <div>
+                      <h4 className="font-serif font-bold text-xs">Tutor de IA Integrado</h4>
+                      <span className="text-[9px] text-[#DFD3C3]/70">Canal direto de explicação de dúvidas</span>
+                    </div>
                   </div>
-                )}
+                  <span className="px-2.5 py-0.5 bg-brand-wood/20 border border-brand-wood/30 text-[#DFD3C3] font-mono text-[9px] uppercase font-bold rounded-full">
+                    Gemini API
+                  </span>
+                </div>
 
-                {aiChatHistory.map((chat, i) => (
-                  <div 
-                    key={i} 
-                    className={`flex ${chat.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                {/* Chat Message Workspace */}
+                <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-brand-paper/30 animate-fade-in">
+                  {aiChatHistory.length === 0 && (
+                    <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-3">
+                      <HelpCircle className="w-8 h-8 text-brand-clay animate-bounce" />
+                      <p className="text-xs font-serif font-bold text-brand-ink">Explicação de Dúvidas Técnicas</p>
+                      <p className="text-[11px] text-brand-clay max-w-xs leading-relaxed font-sans">
+                        Pergunte ao Tutor sobre ferramentas de entalhe, madeiras indicadas, acabamento ou qualquer detalhe teórico desta aula.
+                      </p>
+                    </div>
+                  )}
+
+                  {aiChatHistory.map((chat, i) => (
+                    <div
+                      key={i}
+                      className={`flex ${chat.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div className={`p-3 rounded-2xl text-xs max-w-[85%] leading-relaxed ${
+                        chat.role === 'user'
+                          ? 'bg-brand-wood text-white rounded-tr-none shadow-sm'
+                          : 'bg-white text-brand-ink border border-brand-wood/10 rounded-tl-none shadow-sm markdown-body shadow-inner p-4 font-sans'
+                      }`}>
+                        {chat.role === 'user' ? (
+                          chat.text
+                        ) : (
+                          <Markdown>{chat.text}</Markdown>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+
+                  {aiLoading && (
+                    <div className="flex justify-start">
+                      <div className="p-4 rounded-2xl bg-white border border-brand-wood/10 rounded-tl-none text-xs text-brand-clay flex items-center gap-1.5 font-medium shadow-sm">
+                        <span className="w-2 h-2 bg-brand-wood rounded-full animate-ping" /> Formulando explicação detalhada...
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Live Chat Form */}
+                <form onSubmit={askAiTutor} className="p-3 border-t border-brand-wood/10 bg-brand-paper flex gap-2">
+                  <input
+                    type="text"
+                    value={aiQuery}
+                    onChange={e => setAiQuery(e.target.value)}
+                    placeholder="Tire suas dúvidas técnicas aqui..."
+                    className="flex-1 px-4 py-2.5 text-xs bg-white rounded-full border border-brand-wood/20 focus:outline-none focus:ring-1 focus:ring-brand-wood shadow-sm text-brand-ink"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!aiQuery.trim() || aiLoading}
+                    className="bg-brand-wood hover:bg-brand-clay text-white p-2.5 rounded-full transition-all disabled:opacity-40 shadow-md cursor-pointer flex-shrink-0"
                   >
-                    <div className={`p-3.5 rounded-2xl text-xs max-w-[85%] leading-relaxed ${
-                      chat.role === 'user' 
-                        ? 'bg-brand-wood text-white rounded-tr-none shadow-sm' 
-                        : 'bg-white text-brand-ink border border-brand-wood/10 rounded-tl-none shadow-sm'
-                    }`}>
-                      {chat.text}
-                    </div>
-                  </div>
-                ))}
-
-                {aiLoading && (
-                  <div className="flex justify-start">
-                    <div className="p-4 rounded-2xl bg-white border border-brand-wood/10 rounded-tl-none text-xs text-brand-clay flex items-center gap-1.5 font-medium shadow-sm">
-                      <span className="w-2 h-2 bg-brand-wood rounded-full animate-ping" /> O mentor está formulando a explicação...
-                    </div>
-                  </div>
-                )}
+                    <Send className="w-4 h-4" />
+                  </button>
+                </form>
               </div>
-
-              {/* Input Form */}
-              <form onSubmit={askAiTutor} className="p-3 border-t border-brand-wood/10 bg-brand-paper flex gap-2">
-                <input 
-                  type="text" 
-                  value={aiQuery}
-                  onChange={e => setAiQuery(e.target.value)}
-                  placeholder="Ex: Como obter textura fosca na argila?"
-                  className="flex-1 px-4 py-2.5 text-xs bg-white rounded-full border border-brand-wood/20 focus:outline-none focus:ring-1 focus:ring-brand-wood shadow-sm text-brand-ink"
-                />
-                <button
-                  type="submit"
-                  disabled={!aiQuery.trim() || aiLoading}
-                  className="bg-brand-wood hover:bg-brand-clay text-white p-2.5 rounded-full transition-all disabled:opacity-40 shadow-md"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </form>
             </div>
           )}
 
@@ -1089,71 +2079,30 @@ export default function StudentPortal({
                 <div className="space-y-3">
                   <label className="text-[10px] font-bold text-brand-clay uppercase tracking-wider block">Foto do seu Exercício/Trabalho</label>
                   
-                  {practicalImage ? (
-                    <div className="relative border border-brand-wood/10 rounded-2xl overflow-hidden max-w-md mx-auto bg-brand-paper p-3 shadow-inner group">
-                      <img 
-                        src={getDirectDriveUrl(practicalImage)} 
-                        alt="Preview do Trabalho Prático" 
-                        className="w-full h-52 object-cover rounded-xl"
-                      />
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl">
-                        <button
-                          type="button"
-                          onClick={() => setPracticalImage('')}
-                          className="bg-red-600 text-white font-bold text-[10px] uppercase tracking-widest px-4 py-2 rounded-full shadow-lg hover:bg-red-700 transition-all"
-                        >
-                          Remover Imagem
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="border border-dashed border-brand-wood/20 hover:border-brand-wood/40 transition-all bg-brand-paper/25 rounded-2xl p-6 text-center">
-                        <div className="flex flex-col items-center gap-2">
-                          <UploadCloud className="w-8 h-8 text-brand-clay animate-pulse" />
-                          <p className="text-xs text-brand-clay font-medium">
-                            Arraste e solte o arquivo aqui ou clique abaixo para selecionar
-                          </p>
-                          <button
-                            type="button"
-                            disabled={isUploadingPractical}
-                            onClick={() => {
-                              setIsUploadingPractical(true);
-                              setTimeout(() => {
-                                const sampleImages = [
-                                  "https://images.unsplash.com/photo-1540555700478-4be289fbecef?q=80&w=600&auto=format&fit=crop",
-                                  "https://images.unsplash.com/photo-1581428982868-e410dd047a90?q=80&w=600&auto=format&fit=crop",
-                                  "https://images.unsplash.com/photo-1507208773393-40090c1b30b6?q=80&w=600&auto=format&fit=crop",
-                                  "https://images.unsplash.com/photo-1610555356070-d0efb6505f21?q=80&w=600&auto=format&fit=crop"
-                                ];
-                                const randomImg = sampleImages[Math.floor(Math.random() * sampleImages.length)];
-                                setPracticalImage(randomImg);
-                                setIsUploadingPractical(false);
-                              }, 1000);
-                            }}
-                            className="mt-2 text-[10px] font-sans font-bold uppercase tracking-widest bg-brand-wood text-[#FDFCFB] px-4 py-2 rounded-full hover:bg-brand-clay transition-all disabled:opacity-50"
-                          >
-                            {isUploadingPractical ? "Enviando arquivo..." : "Selecionar Foto do Computador/Celular"}
-                          </button>
-                        </div>
-                      </div>
+                  <FileUploader
+                    allowedTypes="image"
+                    maxSizeMB={5}
+                    currentUrl={practicalImage}
+                    onUploadSuccess={(url) => setPracticalImage(url)}
+                    onDeleteSuccess={() => setPracticalImage('')}
+                  />
 
-                      {/* TEXT URL FALLBACK */}
-                      <div className="flex gap-2 items-center">
-                        <div className="h-px bg-brand-wood/10 flex-1"></div>
-                        <span className="text-[10px] text-brand-clay uppercase tracking-widest font-bold">Ou insira o link da foto</span>
-                        <div className="h-px bg-brand-wood/10 flex-1"></div>
-                      </div>
+                  {/* TEXT URL FALLBACK */}
+                  <div className="flex gap-2 items-center pt-2">
+                    <div className="h-px bg-brand-wood/10 flex-1"></div>
+                    <span className="text-[10px] text-brand-clay uppercase tracking-widest font-bold">Ou insira o link da foto</span>
+                    <div className="h-px bg-brand-wood/10 flex-1"></div>
+                  </div>
 
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          placeholder="Cole aqui a URL da foto (Unsplash, Google Drive público, Imgur...)"
-                          value={practicalImage}
-                          onChange={e => setPracticalImage(e.target.value)}
-                          className="flex-1 p-2.5 bg-brand-paper/50 border border-brand-wood/15 rounded-xl text-brand-ink text-xs focus:outline-none focus:border-brand-wood"
-                        />
-                      </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Cole aqui a URL da foto (Unsplash, Google Drive público, Imgur...)"
+                      value={practicalImage}
+                      onChange={e => setPracticalImage(e.target.value)}
+                      className="flex-1 p-2.5 bg-brand-paper/50 border border-brand-wood/15 rounded-xl text-brand-ink text-xs focus:outline-none focus:border-brand-wood"
+                    />
+                  </div>
 
                       {/* Presets row */}
                       <div className="space-y-1.5 pt-1">
@@ -1178,8 +2127,6 @@ export default function StudentPortal({
                         </div>
                       </div>
                     </div>
-                  )}
-                </div>
 
                 <div className="flex justify-end pt-2">
                   <button

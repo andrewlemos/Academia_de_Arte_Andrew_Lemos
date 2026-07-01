@@ -5,6 +5,7 @@ export interface User {
   role: 'admin' | 'student';
   avatarUrl?: string;
   purchasedProducts: string[]; // List of course IDs and apostila IDs
+  status?: 'active' | 'blocked';
 }
 
 export interface Course {
@@ -84,7 +85,7 @@ export interface Sale {
   productType: 'course' | 'apostila';
   pricePaid: number;
   couponUsed?: string;
-  paymentMethod: 'credit_card' | 'pix' | 'boleto';
+  paymentMethod: 'credit_card' | 'pix' | 'boleto' | 'manual' | 'mercadopago';
   paymentStatus: 'approved' | 'pending' | 'failed';
   createdAt: string;
 }
@@ -104,6 +105,9 @@ export interface StudentProgress {
   completed: boolean;
   completedAt?: string;
   favorited?: boolean;
+  lastPosition?: number;
+  watchTime?: number;
+  lastAccessed?: string;
 }
 
 export interface SupportTicket {

@@ -98,8 +98,17 @@ export default function VisitorCatalog({
 
       {/* Content Grid */}
       {activeTab === 'courses' ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-8" id="courses-grid">
-          {filteredCourses.map(course => {
+        filteredCourses.length === 0 ? (
+          <div className="bg-white rounded-3xl p-12 text-center border border-brand-wood/10 space-y-4 shadow-sm" id="empty-courses-state">
+            <BookOpen className="w-8 h-8 text-brand-clay/40 mx-auto" />
+            <div className="space-y-1">
+              <span className="text-brand-clay uppercase tracking-widest text-[10px] font-sans font-bold">Nenhum Curso Encontrado</span>
+              <p className="text-sm font-sans text-brand-clay font-light">Em breve teremos novos cursos e turmas adicionadas no catálogo.</p>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-8" id="courses-grid">
+            {filteredCourses.map(course => {
             const isBreve = course.status === 'breve';
             const courseModules = isBreve ? [] : modules.filter(m => m.courseId === course.id);
             const isCampaignActive = isBreve ? false : (course.freeModules && course.freeModules.length > 0);
@@ -246,9 +255,18 @@ export default function VisitorCatalog({
             );
           })}
         </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8" id="ebooks-grid">
-          {activeOrBreveApostilas.map(book => {
+      )) : (
+        activeOrBreveApostilas.length === 0 ? (
+          <div className="bg-white rounded-3xl p-12 text-center border border-brand-wood/10 space-y-4 shadow-sm" id="empty-ebooks-state">
+            <FileText className="w-8 h-8 text-brand-clay/40 mx-auto" />
+            <div className="space-y-1">
+              <span className="text-brand-clay uppercase tracking-widest text-[10px] font-sans font-bold">Nenhuma Apostila Encontrada</span>
+              <p className="text-sm font-sans text-brand-clay font-light">Em breve teremos novas apostilas e manuais de artes disponíveis.</p>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8" id="ebooks-grid">
+            {activeOrBreveApostilas.map(book => {
             const isBreve = book.status === 'breve';
             return (
               <div 
@@ -336,7 +354,7 @@ export default function VisitorCatalog({
             );
           })}
         </div>
-      )}
+      ))}
     </div>
   );
 }
